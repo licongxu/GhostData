@@ -1,0 +1,18 @@
+---
+description: Always use ~/envs/cmbagent_env for GhostData Python work
+alwaysApply: true
+---
+
+# Python virtualenv
+
+Always use this venv for GhostData (and any Python you run for this hackathon):
+
+```bash
+source ~/envs/cmbagent_env/bin/activate
+```
+
+- Interpreter: `/Users/licongxu/envs/cmbagent_env/bin/python` (Python 3.14.7)
+- Do not create a project-local `.venv`
+- Do not use system Python, Homebrew `python3`, or conda
+- Install packages with `pip` **after** activating this env
+- Daytona SDK package name is `daytona` (`pip install daytona`), not the deprecated `daytona_sdk`
