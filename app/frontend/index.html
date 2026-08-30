@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GhostData — Agents propose. Daytona verifies.</title>
+    <title>GhostData — Verify a data agent's analysis</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -296,39 +296,39 @@
 
       <section class="hero">
         <h1>GhostData</h1>
-        <p class="lede">Verify data-analysis agents.</p>
-        <p class="hook">They propose hypotheses. Daytona measures each one in isolation. GhostData keeps a Ghost only from measured evidence.</p>
+        <p class="lede">Find when a data agent is wrong.</p>
+        <p class="hook">Upload a table. An agent proposes silent failures. Daytona measures each one in its own sandbox. A <strong>Ghost</strong> is the case where your checks still pass and the frozen model drops.</p>
         <button class="cta" id="try">Try it</button>
       </section>
 
       <section class="about" id="about">
         <p class="kicker">How it works</p>
-        <h2>The agent proposes. Daytona verifies.</h2>
+        <h2>What happens in a run</h2>
         <div class="arch">
           <p class="arch-title">Architecture</p>
           <div class="arch-rail">
             <div class="arch-node">
               <span class="arch-tag">1 · You</span>
-              <b>CSV + task</b>
-              <p>Upload a labeled table. Say what the agent was predicting.</p>
+              <b>Table in</b>
+              <p>Upload a labeled CSV. Name the prediction target.</p>
             </div>
             <div class="arch-join" aria-hidden="true">→</div>
             <div class="arch-node daytona">
-              <span class="arch-tag">2 · Daytona ×1</span>
+              <span class="arch-tag">2 · Agent ×1</span>
               <b>Analysis agent</b>
-              <p>Inspects the table and writes hypotheses. Verifiers measure the rest.</p>
+              <p>Inspects the table and writes failure hypotheses.</p>
             </div>
             <div class="arch-join" aria-hidden="true">→</div>
             <div class="arch-node daytona">
               <span class="arch-tag">3 · Daytona ×N</span>
-              <b>Verifiers</b>
-              <p>Simulate the world, write the dataset, run checks, score the frozen model.</p>
+              <b>Measure</b>
+              <p>Each sandbox simulates that world, writes the dataset, runs checks, scores the frozen model.</p>
             </div>
             <div class="arch-join" aria-hidden="true">→</div>
             <div class="arch-node out">
               <span class="arch-tag">4 · Ghost</span>
-              <b>Keep the failure</b>
-              <p>Checks still pass. Model metric drops. Artifacts download.</p>
+              <b>Evidence out</b>
+              <p>Checks pass. Model drops. Download the four artifacts.</p>
             </div>
           </div>
         </div>
@@ -359,7 +359,7 @@
     <div class="overlay" id="overlay">
       <form class="sheet" id="try-form">
         <h2>Try it</h2>
-        <p class="hint">Labeled CSV + what the agent was predicting. GhostData verifies in Daytona. A Ghost is returned only if checks pass and the model metric drops.</p>
+        <p class="hint">CSV + prediction task. One Daytona sandbox per hypothesis. Ghost = checks pass, model drops.</p>
         <label>CSV upload
           <div class="drop" id="drop">Drop a CSV here, or click to choose</div>
           <input id="upload" type="file" accept=".csv,text/csv" />
