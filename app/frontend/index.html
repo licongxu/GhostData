@@ -270,12 +270,25 @@
         font-family: "IBM Plex Mono", ui-monospace, monospace;
         font-size: 11px; color: var(--muted);
       }
-      .pack-card a.dl {
-        display: inline-block; margin-top: 8px; color: #08110a; text-decoration: none;
-        background: var(--accent); font: 650 13px/1 "Instrument Sans", sans-serif;
+      .pack-card button.preview {
+        appearance: none; border: 0; cursor: pointer; margin-top: 8px; align-self: flex-start;
+        background: var(--accent); color: #08110a;
+        font: 650 13px/1 "Instrument Sans", sans-serif;
         padding: 8px 12px; border-radius: 999px;
       }
       .pack-card .wait { margin-top: 8px; color: var(--muted); font-size: 12px; }
+      #preview-overlay .sheet { width: min(760px, 100%); max-height: 86vh; overflow: auto; }
+      .preview-table-wrap { overflow: auto; max-height: 360px; border: 1px solid var(--line); border-radius: 12px; }
+      .preview-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .preview-table-wrap th, .preview-table-wrap td {
+        padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap;
+      }
+      .preview-table-wrap th { color: var(--accent-2); font-family: "IBM Plex Mono", ui-monospace, monospace; }
+      .preview-code, .preview-json {
+        margin: 0; padding: 12px; overflow: auto; max-height: 360px;
+        background: #070b09; border-radius: 12px; color: #d5dbc8;
+        font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+      }
       .overlay {
         display: none; position: fixed; inset: 0; z-index: 20;
         background: rgba(4, 6, 5, 0.72); backdrop-filter: blur(10px);
@@ -375,13 +388,26 @@
         </div>
         <p class="story" id="what"></p>
         <div class="charts" id="charts"></div>
-        <p class="kicker" id="pack-kicker" style="display:none;margin-top:22px">Ghost pack — four files, no source on screen</p>
+        <p class="kicker" id="pack-kicker" style="display:none;margin-top:22px">Ghost pack — preview, then download</p>
         <div class="pack" id="pack"></div>
         <details class="raw">
           <summary>Raw run payload</summary>
           <pre id="raw-json"></pre>
         </details>
       </section>
+    </div>
+
+    <div class="overlay" id="preview-overlay">
+      <div class="sheet">
+        <p class="kicker" id="preview-kind">Preview</p>
+        <h2 id="preview-title">Artifact</h2>
+        <p class="hint" id="preview-file"></p>
+        <div id="preview-body"></div>
+        <div class="actions">
+          <a class="cta" id="preview-download" href="#" download>Download</a>
+          <button class="cta ghost-btn" id="close-preview" type="button">Close</button>
+        </div>
+      </div>
     </div>
 
     <div class="overlay" id="overlay">
@@ -501,14 +527,14 @@
           file: "transform.py",
           kind: "Code",
           title: "Transform",
-          blurb: "The failure applied to the table. Download the file — source is not shown here.",
+          blurb: "The failure applied to the table. Preview, then download the file.",
         },
         {
           role: "regression_contract",
           file: "regression_contract.py",
           kind: "Code",
           title: "Regression contract",
-          blurb: "Runnable check: original table passes, Ghost fails. Keep it as a regression test.",
+          blurb: "Runnable check: original table passes, Ghost fails.",
         },
       ];
 
@@ -531,7 +557,7 @@
           model_report: (winner.baseline != null && winner.candidate != null)
             ? `AUC ${fmt(winner.baseline)} → ${fmt(winner.candidate)}.`
             : "Checks + frozen-model metric from the verifier.",
-          transform_code: hypothesis ? hypothesis : "The transform Daytona applied. File only — no source dump.",
+          transform_code: hypothesis ? hypothesis : "The transform Daytona applied.",
           regression_contract: "Pass the original CSV. Fail the Ghost CSV.",
         };
         $("#pack-kicker").style.display = found ? "block" : "none";
@@ -542,10 +568,10 @@
         $("#pack").innerHTML = PACK.map((item) => {
           const href = artifacts[item.role];
           const action = href
-            ? `<a class="dl" href="${escapeHtml(href)}" download="${escapeHtml(item.file)}">Download ${escapeHtml(item.file)}</a>`
-            : `<span class="wait">Download after this run publishes the pack.</span>`;
+            ? `<button class="preview" type="button" data-role="${item.role}" data-href="${escapeHtml(href)}" data-file="${escapeHtml(item.file)}" data-title="${escapeHtml(item.title)}" data-kind="${escapeHtml(item.kind)}">Preview ${escapeHtml(item.file)}</button>`
+            : `<span class="wait">Available after this run publishes the pack.</span>`;
           return `<article class="pack-card">
-            <span class="kind">${item.kind}</span>
+            <span class="kind">${item.kind} · ${escapeHtml(item.role)}</span>
             <b>${item.title}</b>
             <p>${escapeHtml(item.blurb)}</p>
             <p>${escapeHtml(facts[item.role])}</p>
@@ -553,6 +579,73 @@
             ${action}
           </article>`;
         }).join("");
+      }
+
+      function csvTable(text) {
+        const lines = text.replace(/\r/g, "").split("\n").filter((line, i, all) => line || i < all.length - 1);
+        const rows = lines.slice(0, 13).map((line) => line.split(","));
+        if (!rows.length) return "<p class='hint'>Empty file.</p>";
+        const head = rows[0].map((cell) => `<th>${escapeHtml(cell)}</th>`).join("");
+        const body = rows.slice(1).map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
+        const extra = lines.length > 13 ? `<p class="hint">Showing first ${rows.length - 1} rows of ${Math.max(0, lines.length - 1)}. Download for the rest.</p>` : "";
+        return `<div class="preview-table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${extra}`;
+      }
+
+      function jsonPreview(text) {
+        let body = text;
+        try {
+          const obj = JSON.parse(text);
+          const summary = {
+            label_column: obj.label_column,
+            rows: obj.rows,
+            affected_rows: obj.affected_rows,
+            baseline_auc: obj.baseline_auc,
+            candidate_auc: obj.candidate_auc,
+            auc_drop: obj.auc_drop,
+            invariants: obj.invariants,
+            metric: obj.metric,
+          };
+          body = JSON.stringify(summary, null, 2);
+        } catch (error) {
+          body = text.slice(0, 4000);
+        }
+        return `<pre class="preview-json">${escapeHtml(body)}</pre>`;
+      }
+
+      function codePreview(text) {
+        const lines = text.split("\n");
+        const shown = lines.slice(0, 60).join("\n");
+        const extra = lines.length > 60 ? `\n\n… ${lines.length - 60} more lines in the download` : "";
+        return `<pre class="preview-code">${escapeHtml(shown + extra)}</pre>`;
+      }
+
+      async function openPreview(button) {
+        const href = button.getAttribute("data-href");
+        const file = button.getAttribute("data-file");
+        const title = button.getAttribute("data-title");
+        const kind = button.getAttribute("data-kind");
+        const role = button.getAttribute("data-role");
+        $("#preview-kind").textContent = `${kind} · ${role}`;
+        $("#preview-title").textContent = title;
+        $("#preview-file").textContent = file;
+        $("#preview-download").href = href;
+        $("#preview-download").setAttribute("download", file);
+        $("#preview-body").innerHTML = "<p class='hint'>Loading preview…</p>";
+        $("#preview-overlay").classList.add("open");
+        try {
+          const response = await fetch(href);
+          const text = await response.text();
+          if (!response.ok) throw new Error(text || response.statusText);
+          if (role === "degraded_dataset") $("#preview-body").innerHTML = csvTable(text);
+          else if (role === "model_report") $("#preview-body").innerHTML = jsonPreview(text);
+          else $("#preview-body").innerHTML = codePreview(text);
+        } catch (error) {
+          $("#preview-body").innerHTML = `<p class="hint">Preview failed: ${escapeHtml(error.message)}</p>`;
+        }
+      }
+
+      function closePreview() {
+        $("#preview-overlay").classList.remove("open");
       }
 
       function renderVisuals(visuals) {
@@ -684,6 +777,14 @@
       $("#close-try").addEventListener("click", closeTry);
       $("#overlay").addEventListener("click", (event) => {
         if (event.target === $("#overlay")) closeTry();
+      });
+      $("#pack").addEventListener("click", (event) => {
+        const button = event.target.closest("button.preview");
+        if (button) openPreview(button);
+      });
+      $("#close-preview").addEventListener("click", closePreview);
+      $("#preview-overlay").addEventListener("click", (event) => {
+        if (event.target === $("#preview-overlay")) closePreview();
       });
       $("#dataset").addEventListener("change", (event) => {
         $("#prompt").value = prompts[event.target.value] || prompts.credit;

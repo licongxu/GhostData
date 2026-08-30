@@ -114,7 +114,10 @@ def test_frontend_route_serves_demo_shell() -> None:
     assert "ghost_dataset.csv" in response.text
     assert "Model report" in response.text
     assert "Regression contract" in response.text
-    assert "source is not shown" in response.text
+    assert "transform_code" in response.text
+    assert "degraded_dataset" in response.text
+    assert "Preview" in response.text
+    assert 'id="preview-overlay"' in response.text
     assert "Run on Daytona" in response.text
     assert 'id="upload"' in response.text
     assert 'id="prompt"' in response.text

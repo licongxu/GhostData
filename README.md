@@ -12,6 +12,19 @@ A **Ghost** is a measured counterexample: existing checks still pass and the fro
 
 The analysis agent writes hypotheses. **Daytona simulates each world** in its own ephemeral sandbox: apply the transform, emit a simulated dataset (same schema, same values, wrong relationships), run existing checks, score the frozen model, then delete the sandbox. The host ranks that measured evidence. Leftover sandboxes should be `0`.
 
+## Ghost pack
+
+A Ghost ships four files. The UI previews each one; download if you want the original.
+
+| File | Role | What you get |
+|---|---|---|
+| `ghost_dataset.csv` | Dataset | Simulated table Daytona materialized. Same schema, same values, wrong relationships. |
+| `model_report.json` | Report | Measured checks, frozen-model AUC before → after, affected rows. |
+| `transform.py` | Code | The failure applied to the table. Preview in the UI; full file via download. |
+| `regression_contract.py` | Code | Runnable test: original CSV passes, Ghost CSV fails. |
+
+These are the only client artifacts. The page does not paste the whole source into the layout.
+
 ## Quick start
 
 Python 3.11+. Daytona key from [app.daytona.io](https://app.daytona.io). Codex login is optional.
@@ -24,7 +37,7 @@ python scripts/ensure_snapshot.py
 PYTHONPATH=src uvicorn app.backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Upload a labeled CSV (or pick a fixture). Say what the agent was predicting, e.g. `Predict credit default; SeriousDlqin2yrs is the label.` If a Ghost is measured, download the four artifacts.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Upload a labeled CSV (or pick a fixture). Say what the agent was predicting, e.g. `Predict credit default; SeriousDlqin2yrs is the label.` If a Ghost is measured, preview the four files on the page, then download.
 
 Without Codex: `GHOSTDATA_ANALYST=deterministic` in `.env`. With Codex: `codex login` (ChatGPT), then `GHOSTDATA_ANALYST=auto`.
 
