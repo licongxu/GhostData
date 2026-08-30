@@ -19,29 +19,16 @@ def test_health_and_verification_catalog() -> None:
     response = client.get("/api/verifications")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "verification_id": "V001",
-            "claim_id": "C001",
-            "experiment_type": "entity_alignment",
-            "hypothesis": (
-                "Valid MonthlyIncome values become attached to the wrong entities while "
-                "the agent's stated invariants remain unchanged."
-            ),
-            "parameters": {
-                "target_feature": "MonthlyIncome",
-                "segment": {},
-                "mismatch_fraction": 0.25,
-                "seed": 7,
-            },
-            "expected_invariants": [
-                "schema",
-                "marginal_distribution",
-                "missing_rate",
-            ],
-            "origin": "fixed_library",
-        }
+    spec = response.json()[0]
+    assert spec["experiment_type"] == "entity_alignment"
+    assert spec["origin"] == "sandbox_agent"
+    assert spec["claim_id"] == "C001"
+    assert spec["expected_invariants"] == [
+        "schema",
+        "marginal_distribution",
+        "missing_rate",
     ]
+    assert spec["parameters"]["target_feature"]
 
 
 def test_demo_bundle_endpoint_exposes_agent_claim_contract() -> None:
@@ -61,6 +48,9 @@ def test_demo_run_endpoint_executes_real_local_backend() -> None:
     payload = response.json()
     assert payload["verdict"] == "not_verified"
     assert payload["counterexamples"] == 1
+    assert payload["proposal"]["origin"] == "sandbox_agent"
+    assert payload["proposal"]["experiment_type"] == "entity_alignment"
+    assert payload["proposal"]["inspected_columns"]
     visuals = payload["visuals"]
     assert visuals["headline"] == "Same values. Different relationships."
     marginal = next(chart for chart in visuals["charts"] if chart["id"] == "marginal")
@@ -80,8 +70,11 @@ def test_frontend_route_serves_demo_shell() -> None:
     assert "<h1>GhostData</h1>" in response.text
     assert 'fetch("/api/verifications")' in response.text
     assert "Run in Daytona" in response.text
-    assert "Same values. Different relationships." in response.text
+    assert "after inspecting the table" in response.text
     assert 'id="charts"' in response.text
+    assert "Rows shuffled" in response.text
+    assert "Model quality" in response.text
+    assert 'runBackend("local")' in response.text
 
 
 def test_discovery_endpoints_return_run_and_artifact_links(

@@ -11,25 +11,23 @@ metrics, claims, and tests. GhostData independently plans falsification experime
 executes them in isolated environments, evaluates the resulting evidence, and returns
 a `verified`, `not_verified`, or `inconclusive` verdict.
 
-The credit preprocessing scenario remains the only demo. The product contracts are
-general, but the implementation scope has not been expanded into a generic agent
-platform.
+Credit data is a fixture. The proposer inspects any labeled table, fills a
+`VerificationSpec`, and a separate executor applies that spec. The product is the
+verification loop, not a credit-scoring script.
 
 ```text
-AI data agent
-    -> AnalysisBundle
-    -> Claim extraction
-    -> Verification Planner
-    -> VerificationSpec
-    -> Local / Daytona execution
+labeled CSV
+    -> proposer sandbox (inspect table, emit VerificationSpec)
+    -> executor sandbox (transform, checks, frozen-model score)
     -> ExecutionEvidence
     -> Evaluator
     -> VerificationReport
 ```
 
-A Ghost is defined as an executable counterexample to an AI agent's claim.
+A Ghost is defined as an executable counterexample to an AI agent's claim:
+existing checks pass and the frozen model metric drops.
 
-The discovery demo now uses four transparent simulated-agent profiles. They are
+The discovery demo still uses four transparent simulated-agent profiles. They are
 deterministic parameterized proposals, not LLM-generated code. Each proposal executes
 in its own Daytona sandbox, and the strongest measured counterexample is rerun in a
 separate promotion sandbox before client artifacts are published.
@@ -50,15 +48,19 @@ separate promotion sandbox before client artifacts are published.
 ### Planning
 
 - Added a `VerificationPlanner` protocol.
-- Added `KnownFailurePlanner`, the P0 fixed-library implementation.
-- The current planner emits one deterministic entity-alignment experiment for a model
-  metric preservation claim.
+- Added `KnownFailurePlanner`, the P0 fixed-library implementation used by unit tests
+  and the discovery demo.
+- Added `StructuredSpecPlanner`. It never writes transform code or Ghost CSVs. It
+  profiles a labeled table and fills a `VerificationSpec` with `experiment_type`,
+  `parameters`, `hypothesis`, `expected_invariants`, and `origin="sandbox_agent"`.
+- The current operator library is `entity_alignment`. The proposer picks the numeric
+  feature with the strongest absolute correlation to the label.
+- If no LLM key is present, the sandbox still analyzes the table. The spec is data-driven,
+  not a hardcoded `MonthlyIncome` experiment.
 - Added a credit discovery planner with four simulated-agent profiles using mismatch
   fractions `0.10`, `0.25`, `0.50`, and `0.75` and stable verification identities.
 - Counterexamples are ranked by independently measured AUC degradation, never by the
   requested mismatch fraction.
-- Future AI or data-driven planners can implement the same protocol without changing
-  execution or evaluation.
 
 ### Execution
 
@@ -67,17 +69,25 @@ separate promotion sandbox before client artifacts are published.
 - Added `LocalVerificationRunner` for development and deterministic testing.
 - Added a positional entity-alignment transform that supports duplicate DataFrame
   indexes while preserving marginal values.
+- Added generic table loading, profiling, invariant checks, and frozen-feature scoring
+  in `ghostdata.tabular`. Credit helpers remain only where the discovery fixture still
+  needs them.
 - Added `DaytonaVerificationRunner` with:
   - one ephemeral sandbox per verification experiment;
-  - labels for bundle, claim, verification, and experiment identities;
+  - labels for project, role, bundle, claim, verification, and experiment identities;
   - `bundle.json` and `verification.json` uploads;
-  - configurable snapshot, timeouts, network blocking, and auto-stop;
+  - configurable snapshot, timeouts, network blocking, auto-stop, env vars, and optional
+    Volume mount;
   - evidence download and strict identity validation;
   - sandbox deletion on every post-creation exit path;
   - unsafe path and reserved manifest protection.
-- Added the real credit worker bundle. It uploads the selected CSV, the checked-in
-  worker, and the current `ghostdata` package into the isolated sandbox, then returns
-  `evidence.json` to the host evaluator.
+- Added `DaytonaProposalRunner`. It creates a separate ephemeral sandbox with
+  `role=proposer`, uploads the CSV and proposer script, optionally uses a code
+  interpreter / process session when the SDK exposes them, downloads
+  `verification.json` and `analysis.json`, then deletes the sandbox.
+- The executor sandbox uses `role=executor` and `network_block_all`.
+- The generic worker reads `task.json` for the label column and the spec for the
+  target feature. It does not hardcode credit column names.
 - Ran the complete 120,000-row credit dataset locally and in a live Daytona sandbox.
   Both produced identical measurements, and bounded polling confirmed sandbox cleanup.
 - Added a discovery worker that fits a deterministic scikit-learn logistic regression
@@ -116,7 +126,13 @@ separate promotion sandbox before client artifacts are published.
 
 ### Demo application
 
-- Added a working FastAPI backend and static frontend for the credit example.
+- Added a working FastAPI backend and static frontend.
+- The demo path is table-agnostic. Credit is one fixture; German credit and a synthetic
+  churn table use the same proposer and executor.
+- `POST /api/demo/run` returns the verification report, generic chart payloads, and a
+  `proposal` object (`origin`, experiment type, hypothesis, inspected columns).
+- The frontend states that the agent proposed entity alignment after inspecting the
+  table. Judge-facing copy does not name credit columns.
 - Available endpoints:
   - `GET /health`
   - `GET /api/demo/bundle`
@@ -126,8 +142,6 @@ separate promotion sandbox before client artifacts are published.
   - `GET /api/discovery/runs`
   - `GET /api/discovery/runs/{discovery_id}`
   - `GET /api/discovery/runs/{discovery_id}/artifacts/{role}`
-- Both frontend buttons were exercised against the running backend. The local and
-  Daytona paths returned the expected counterexample.
 - Removed the old `/api/worlds` contract and the narrow `WorldSpec` / `CandidateResult`
   architecture.
 
@@ -144,13 +158,13 @@ separate promotion sandbox before client artifacts are published.
 
 ### Tests and verification
 
-- 153 unit tests pass.
+- 173 unit tests pass.
 - Line coverage: 100%.
-- Branch coverage: 99.6%.
+- Total coverage: 99.82% (three partial branches).
 - The default `pytest` command enforces a minimum 98% coverage threshold.
-- The suite covers bundle contracts, planning, local execution, Daytona cleanup and
-  isolation, evaluator boundaries, concurrent orchestration, API responses, and the
-  credit demo path.
+- The suite covers bundle contracts, table profiling, structured-spec planning, local
+  execution, Daytona proposer/executor isolation, evaluator boundaries, concurrent
+  orchestration, API responses, credit as a fixture, and non-credit tables.
 
 The notebook's original proxy-scorer run remains reproducible, but it is not described
 as a trained-model result. The new full-dataset Daytona discovery uses a fitted logistic
@@ -170,12 +184,16 @@ Invariants:          3 / 3 pass
 Remaining sandboxes: 0
 ```
 
+On the debug credit fixture, the proposer now selects `NumberOfTimes90DaysLate`
+(highest |corr| with the label), not the previously hardcoded `MonthlyIncome`.
+
 ## Not completed
 
-- The custom `ghostdata-runner` snapshot and shared Daytona Volume are not built.
+- The custom `ghostdata-runner` snapshot is not built. Optional Volume mounting is
+  wired, but the shared data/model Volume is not provisioned.
 - Claim extraction is manual through `BundleClaimExtractor`; there is no LLM extractor.
-- Planning uses one fixed-library experiment; there is no AI planner, parameter sweep,
-  or iterative refinement.
+- The proposer emits structured JSON from a table profile. There is no LLM-backed
+  structured-output path yet because no model key is configured.
 - Only model metric preservation has an evaluator. Schema, SQL correctness,
   reproducibility, relationships, subgroup metrics, and statistical evaluators are not
   implemented.
@@ -184,7 +202,8 @@ Remaining sandboxes: 0
   artifact directories.
 - The frontend runs the example end to end, but it is not yet the planned Pipeline PR /
   Search / Ghost Found presentation flow.
-- Discovery profiles are deterministic simulations. There is no LLM proposal agent yet.
+- Discovery profiles are deterministic simulations. There is no LLM proposal agent on
+  that path yet.
 - The discovery endpoint is synchronous; queued execution and live progress events are
   not implemented yet.
 
@@ -194,7 +213,8 @@ Remaining sandboxes: 0
    run does not upload the package and dataset.
 2. Move discovery to a queued backend job with live sandbox/progress status.
 3. Build the three demo screens against the completed discovery and artifact APIs.
-4. Connect an LLM proposal agent behind the existing `VerificationPlanner` boundary.
+4. Connect an LLM structured-output proposer behind the existing `VerificationPlanner`
+   boundary when a key is available.
 5. Add the next evaluator only after the credit demo presentation flow is complete.
 
 ## Commands
@@ -232,8 +252,8 @@ python scripts/verify_ghost_delivery.py \
 ## Design constraints to preserve
 
 - Agents propose; execution produces evidence; evaluators decide.
+- The proposer must not write transforms, Ghost CSVs, or verdicts.
 - Daytona is the isolated execution substrate, not the intelligence layer.
 - Execution evidence must never contain a precomputed verdict.
 - An execution failure must never be counted as verification success.
-- Product contracts may be general, but the hackathon demo remains the single credit
-  preprocessing scenario until it works live end to end.
+- Credit is a fixture. Any labeled CSV must follow the same two-sandbox path.

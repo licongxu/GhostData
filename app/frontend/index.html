@@ -32,7 +32,8 @@
         margin-top: 20px; padding: 20px; border: 1px solid var(--line);
         border-radius: 12px; background: var(--panel);
       }
-      #charts { display: grid; gap: 16px; margin-top: 20px; }
+      #ghost { margin-top: 8px; }
+      #charts { display: grid; gap: 16px; margin-top: 20px; min-height: 280px; }
       @media (min-width: 860px) {
         #charts { grid-template-columns: 1fr 1fr; }
         #charts > article:only-child,
@@ -65,14 +66,14 @@
         <button data-backend="local">Run on local backend</button>
         <button class="secondary" data-backend="daytona">Run in Daytona</button>
       </p>
-      <p id="result">Choose a backend to run a verification. Charts are built from whichever columns the experiment touches.</p>
+      <p id="result">Loading the measured counterexample…</p>
 
-      <section id="ghost" hidden>
+      <section id="ghost">
         <p class="headline" id="headline">Same values. Different relationships.</p>
         <div class="stats">
           <div class="stat"><span>Existing checks</span><b id="check-stat"></b></div>
-          <div class="stat"><span id="metric-label">Model metric</span><b id="metric-stat"></b></div>
-          <div class="stat"><span id="affected-label">Affected rows</span><b id="affected-stat"></b></div>
+          <div class="stat"><span>Model quality</span><b id="metric-stat"></b></div>
+          <div class="stat"><span>Rows shuffled</span><b id="affected-stat"></b></div>
         </div>
         <div id="charts"></div>
       </section>
@@ -87,8 +88,12 @@
       const GHOST = "#e8ff67";
 
       fetch("/api/verifications").then((response) => response.json()).then((verifications) => {
+        const copy = {
+          entity_alignment:
+            "Valid values get attached to the wrong rows. Checks that only look at the value distribution still pass.",
+        };
         document.querySelector("#verifications").innerHTML = verifications.map((spec) => `
-          <article><code>${spec.verification_id} · ${spec.experiment_type}</code><p>${spec.hypothesis}</p></article>
+          <article><code>${spec.verification_id} · ${String(spec.experiment_type).replaceAll("_", " ")}</code><p>${copy[spec.experiment_type] || spec.hypothesis}</p></article>
         `).join("");
       });
 
@@ -235,52 +240,53 @@
         const mount = document.querySelector("#charts");
         mount.replaceChildren();
         if (!visuals) {
-          ghost.hidden = true;
           return;
         }
-        ghost.hidden = false;
         document.querySelector("#headline").textContent = visuals.headline;
         const passed = Object.values(visuals.invariants).filter(Boolean).length;
         const total = Object.keys(visuals.invariants).length;
         document.querySelector("#check-stat").className = passed === total ? "pass" : "fail";
         document.querySelector("#check-stat").textContent = `${passed} / ${total} PASS`;
         const metric = visuals.metric;
-        document.querySelector("#metric-label").textContent = metric.name;
         document.querySelector("#metric-stat").className = "fail";
         document.querySelector("#metric-stat").textContent =
           metric.baseline == null ? "—" : `${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`;
-        document.querySelector("#affected-label").textContent = `Shuffled ${visuals.perturbed_feature}`;
         document.querySelector("#affected-stat").textContent = pct(metric.affected_fraction);
         (visuals.charts || []).forEach((chart) => mount.append(renderChart(chart)));
         document.querySelector("#raw-json").textContent = JSON.stringify(payload, null, 2);
+        ghost.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+
+      async function runBackend(backend) {
+        const result = document.querySelector("#result");
+        const buttons = document.querySelectorAll("button[data-backend]");
+        buttons.forEach((item) => { item.disabled = true; });
+        result.textContent = `Running in ${backend}…`;
+        try {
+          const response = await fetch(`/api/demo/run?backend=${backend}`, { method: "POST" });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || response.statusText);
+          const verdict = payload.verdict === "not_verified" ? "GHOST FOUND" : payload.verdict;
+          const metric = payload.visuals && payload.visuals.metric;
+          const metricText = metric && metric.baseline != null
+            ? `model quality ${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`
+            : "model quality dropped";
+          const proposed = payload.proposal && payload.proposal.origin === "sandbox_agent"
+            ? " Agent proposed entity alignment after inspecting the table."
+            : "";
+          result.innerHTML = `<strong class="fail">${verdict}</strong> · checks still pass, ${metricText}.${proposed}`;
+          renderVisuals(payload);
+        } catch (error) {
+          result.textContent = `Run failed: ${error.message}`;
+        } finally {
+          buttons.forEach((item) => { item.disabled = false; });
+        }
       }
 
       document.querySelectorAll("button[data-backend]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const backend = button.dataset.backend;
-          const result = document.querySelector("#result");
-          const buttons = document.querySelectorAll("button[data-backend]");
-          buttons.forEach((item) => { item.disabled = true; });
-          result.textContent = `Running in ${backend}…`;
-          try {
-            const response = await fetch(`/api/demo/run?backend=${backend}`, { method: "POST" });
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || response.statusText);
-            const verdict = payload.verdict === "not_verified" ? "GHOST FOUND" : payload.verdict;
-            const metric = payload.visuals && payload.visuals.metric;
-            const metricText = metric && metric.name
-              ? `${metric.name} ${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`
-              : "model quality dropped";
-            result.innerHTML = `<strong class="fail">${verdict}</strong> · checks still pass, ${metricText}.`;
-            renderVisuals(payload);
-          } catch (error) {
-            result.textContent = `Run failed: ${error.message}`;
-            document.querySelector("#ghost").hidden = true;
-          } finally {
-            buttons.forEach((item) => { item.disabled = false; });
-          }
-        });
+        button.addEventListener("click", () => runBackend(button.dataset.backend));
       });
+      runBackend("local");
     </script>
   </body>
 </html>

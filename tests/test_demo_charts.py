@@ -55,7 +55,7 @@ def test_credit_visuals_keep_marginal_and_break_relationships() -> None:
     )
 
     assert visuals["headline"] == "Same values. Different relationships."
-    assert visuals["perturbed_feature"] == "MonthlyIncome"
+    assert visuals["perturbed_feature"] == prepared.specs[0].parameters["target_feature"]
     marginal = _chart(visuals, "marginal")
     assert marginal["reference"] == marginal["ghost"]
     assert _chart(visuals, "label")["reference"] != _chart(visuals, "label")["ghost"]
@@ -77,7 +77,7 @@ def test_attach_visuals_accepts_an_explicit_table() -> None:
 
     assert payload["verdict"] == "not_verified"
     assert payload["counterexamples"] == 1
-    assert payload["visuals"]["metric"]["baseline"] == pytest.approx(0.5536616071428572)
+    assert payload["visuals"]["metric"]["candidate"] < payload["visuals"]["metric"]["baseline"]
     assert payload["visuals"]["charts"][0]["id"] == "marginal"
 
 
@@ -95,9 +95,15 @@ def test_visuals_work_on_a_non_credit_table() -> None:
 
     assert visuals["perturbed_feature"] == "tenure"
     assert visuals["label_column"] == "churn"
-    assert "MonthlyIncome" not in json.dumps(visuals)
-    assert _chart(visuals, "marginal")["x_label"] == "tenure"
-    assert "churn" in _chart(visuals, "label")["caption"]
+    public_text = " ".join(
+        f"{chart['title']} {chart['caption']} {chart['x_label']} {chart['y_label']}"
+        for chart in visuals["charts"]
+    )
+    assert "tenure" not in public_text
+    assert "churn" not in public_text
+    assert "spend" not in public_text
+    assert _chart(visuals, "marginal")["x_label"] == "Feature value"
+    assert "wrong rows" in _chart(visuals, "label")["caption"]
     assert visuals["paired_column"] == "spend"
 
 
@@ -109,6 +115,12 @@ def test_visuals_work_after_swapping_in_german_credit() -> None:
 
     assert visuals["perturbed_feature"] == "credit_amount"
     assert visuals["label_column"] == "class"
+    public_text = " ".join(
+        f"{chart['title']} {chart['caption']} {chart['x_label']} {chart['y_label']}"
+        for chart in visuals["charts"]
+    )
+    assert "credit_amount" not in public_text
+    assert "class" not in public_text
     assert {item["id"] for item in visuals["charts"]} >= {"marginal", "label"}
 
 

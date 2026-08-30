@@ -60,6 +60,12 @@ def _quantile_bins(values: pd.Series) -> tuple[np.ndarray, tuple[str, ...]]:
     if observed.nunique() < 2:
         return np.asarray([float(observed.iloc[0])], dtype=float), ()
     _, edges = pd.qcut(observed, FEATURE_QUANTILES, retbins=True, duplicates="drop")
+    if len(edges) - 1 < 2 and int(observed.nunique()) >= 2:
+        unique = np.sort(observed.unique())
+        width = float(unique[-1] - unique[-2]) or 1.0
+        edges = np.concatenate([unique, [unique[-1] + width]])
+        labels = tuple(f"Bin {index + 1}" for index in range(len(unique)))
+        return np.asarray(edges, dtype=float), labels
     count = len(edges) - 1
     labels = QUANTILE_LABELS if count == FEATURE_QUANTILES else tuple(
         f"Bin {index + 1}" for index in range(count)
@@ -208,16 +214,15 @@ def _continuous(series: pd.Series) -> bool:
 
 
 def _marginal_chart(reference: pd.DataFrame, ghost: pd.DataFrame, feature: str) -> dict[str, Any]:
-    caption = f"Existing checks see the same {feature} distribution."
     if _continuous(reference[feature]):
         edges = _bin_edges(reference[feature])
         return {
             "id": "marginal",
             "kind": "overlay_histogram",
             "title": "What existing tests see",
-            "caption": caption,
-            "x_label": feature,
-            "y_label": "Count",
+            "caption": "The value distribution is unchanged, so schema and histogram checks still pass.",
+            "x_label": "Feature value",
+            "y_label": "Rows",
             "bin_midpoints": _midpoints(edges),
             "reference": _histogram(reference[feature], edges),
             "ghost": _histogram(ghost[feature], edges),
@@ -231,9 +236,9 @@ def _marginal_chart(reference: pd.DataFrame, ghost: pd.DataFrame, feature: str) 
         "id": "marginal",
         "kind": "grouped_bars",
         "title": "What existing tests see",
-        "caption": caption,
-        "x_label": feature,
-        "y_label": "Count",
+        "caption": "The value distribution is unchanged, so schema and histogram checks still pass.",
+        "x_label": "Feature value",
+        "y_label": "Rows",
         "y_format": "number",
         "labels": [str(item) for item in categories],
         "reference": [int(ref_counts.get(item, 0)) for item in categories],
@@ -246,6 +251,7 @@ def _relationship_chart(
     chart_id: str,
     title: str,
     caption: str,
+    y_label: str,
     reference: pd.DataFrame,
     ghost: pd.DataFrame,
     feature: str,
@@ -261,8 +267,8 @@ def _relationship_chart(
         "kind": "grouped_bars",
         "title": title,
         "caption": caption,
-        "x_label": f"{feature} quantile",
-        "y_label": column,
+        "x_label": "Feature quantile",
+        "y_label": y_label,
         "y_format": y_format,
         "labels": list(labels),
         "reference": _grouped_values(reference, feature, edges, labels, column, reducer),
@@ -288,7 +294,8 @@ def build_visuals(
         label_chart = _relationship_chart(
             chart_id="label",
             title="What the model depended on",
-            caption=f"Mean {label} by {feature} quantile.",
+            caption="After values move to the wrong rows, the outcome pattern flattens.",
+            y_label="Outcome",
             reference=reference,
             ghost=ghost,
             feature=feature,
@@ -301,8 +308,9 @@ def build_visuals(
     if paired is not None:
         paired_chart = _relationship_chart(
             chart_id="paired",
-            title=f"{feature} × {paired}",
-            caption=f"Median {paired} by {feature} quantile. Values stayed valid; pairing did not.",
+            title="The pairing broke",
+            caption="The numbers are still valid. They now belong to the wrong rows.",
+            y_label="Related feature",
             reference=reference,
             ghost=ghost,
             feature=feature,

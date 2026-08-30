@@ -35,8 +35,9 @@ def valid_evidence(**overrides: object) -> dict[str, object]:
 
 
 class FakeFileSystem:
-    def __init__(self, payload: bytes) -> None:
+    def __init__(self, payload: bytes, files: dict[str, bytes] | None = None) -> None:
         self.payload = payload
+        self.files = dict(files or {})
         self.uploads: dict[str, bytes] = {}
         self.downloads: list[str] = []
         self.fail_upload = False
@@ -46,11 +47,14 @@ class FakeFileSystem:
         if self.fail_upload:
             raise OSError("upload failed")
         self.uploads[path] = contents
+        self.files[path] = contents
 
     def download_file(self, path: str) -> bytes:
         if self.fail_download:
             raise OSError("download failed")
         self.downloads.append(path)
+        if path in self.files:
+            return self.files[path]
         return self.payload
 
 
@@ -62,6 +66,19 @@ class FakeProcess:
     def exec(self, command: str, **kwargs: object) -> SimpleNamespace:
         self.calls.append((command, kwargs))
         return SimpleNamespace(exit_code=self.exit_code, result="worker output")
+
+
+class SessionProcess(FakeProcess):
+    def __init__(self, exit_code: int = 0) -> None:
+        super().__init__(exit_code)
+        self.sessions: list[str] = []
+        self.deleted_sessions: list[str] = []
+
+    def create_session(self, name: str) -> None:
+        self.sessions.append(name)
+
+    def delete_session(self, name: str) -> None:
+        self.deleted_sessions.append(name)
 
 
 class FakeClient:
@@ -132,6 +149,7 @@ def test_daytona_runner_uploads_both_manifests_and_forwards_isolation() -> None:
     assert params.auto_stop_interval == 8
     assert params.labels == {
         "project": "ghostdata",
+        "role": "executor",
         "bundle_id": "B001",
         "claim_id": "C001",
         "verification_id": "V001",
@@ -246,6 +264,7 @@ def test_list_executions_maps_labels_and_filters_project() -> None:
         "experiment_type": "entity_alignment",
         "agent_id": "",
         "discovery_id": "",
+        "role": "",
     }
     assert executions[1]["verification_id"] == ""
     assert client.listed_query.labels == {"project": "ghostdata"}
@@ -337,3 +356,84 @@ def test_daytona_runner_adds_agent_and_discovery_labels() -> None:
 
     assert client.created_params.labels["agent_id"] == "agent-1"
     assert client.created_params.labels["discovery_id"] == "run-1"
+
+
+def test_daytona_runner_forwards_role_env_volume_and_network_override() -> None:
+    client = FakeClient()
+    client.volume = SimpleNamespace(
+        get=lambda name, create=True: SimpleNamespace(id="vol-1")
+    )
+    job = DaytonaJob(
+        "python worker.py",
+        role="executor",
+        extra_labels={"stage": "demo", "": "skip", "count": 1},
+        env_vars={"GHOSTDATA": "1"},
+        network_block_all=False,
+    )
+    settings = DaytonaSettings(volume_name="ghostdata-data", volume_mount="/data")
+
+    runner(client, job, settings).run(BUNDLE, SPEC)
+
+    params = client.created_params
+    assert params.network_block_all is False
+    assert params.env_vars == {"GHOSTDATA": "1"}
+    assert params.labels["role"] == "executor"
+    assert params.labels["stage"] == "demo"
+    assert "" not in params.labels
+    assert params.volumes[0].volume_id == "vol-1"
+    assert params.volumes[0].mount_path == "/data"
+
+    skipped = FakeClient()
+    runner(skipped, settings=DaytonaSettings(volume_name="ghostdata-data")).run(
+        BUNDLE, SPEC
+    )
+    assert skipped.created_params.volumes is None
+
+
+def test_daytona_proposal_runner_inspects_table_and_deletes_sandbox() -> None:
+    from ghostdata.execution.daytona import DaytonaProposalRunner
+
+    spec = SPEC.to_dict()
+    spec["origin"] = "sandbox_agent"
+    analysis = {"ranked_features": ["income"], "inspected_columns": ["income", "label"]}
+    work = "/home/daytona/ghostdata"
+    client = FakeClient()
+    client.sandbox.process = SessionProcess()
+    client.sandbox.code_interpreter = SimpleNamespace(ran=[])
+    client.sandbox.code_interpreter.run_code = (
+        lambda code: client.sandbox.code_interpreter.ran.append(code)
+    )
+    client.sandbox.fs.files = {
+        f"{work}/verification.json": json.dumps(spec).encode(),
+        f"{work}/analysis.json": json.dumps(analysis).encode(),
+    }
+
+    specs, observed = DaytonaProposalRunner(client=client).propose(
+        BUNDLE, {"proposer.py": b"print(1)"}, "label", "C001"
+    )
+
+    assert specs[0].origin == "sandbox_agent"
+    assert observed == analysis
+    assert client.created_params.labels["role"] == "proposer"
+    assert client.sandbox.code_interpreter.ran == ["print('ghostdata-proposer-ready')"]
+    assert client.sandbox.process.sessions == ["proposer"]
+    assert client.sandbox.process.deleted_sessions == ["proposer"]
+    assert client.deleted == [client.sandbox]
+
+
+def test_daytona_proposal_runner_rejects_unsafe_paths_and_failed_exec() -> None:
+    from ghostdata.execution.daytona import DaytonaProposalRunner
+
+    client = FakeClient()
+    with pytest.raises(ValueError, match="work directory"):
+        DaytonaProposalRunner(client=client).propose(
+            BUNDLE, {"../escape.py": b"bad"}, "label", "C001"
+        )
+    assert client.created_params is None
+
+    failing = FakeClient(exit_code=1)
+    with pytest.raises(RuntimeError, match="proposer exited 1"):
+        DaytonaProposalRunner(client=failing).propose(
+            BUNDLE, {"proposer.py": b"pass"}, "label", "C001"
+        )
+    assert failing.deleted == [failing.sandbox]

@@ -8,29 +8,29 @@ from typing import Literal, Mapping
 
 import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 
-from ghostdata.bundle import AgentOutput, AnalysisBundle, BundleClaimExtractor, Claim
-from ghostdata.evaluators import EvaluatorRegistry, ModelMetricPreservationEvaluator
-from ghostdata.execution.local import LocalVerificationRunner, default_compiler
-from ghostdata.planner import KnownFailurePlanner
+from ghostdata.bundle import AnalysisBundle
+from ghostdata.demo.table import (
+    WORKER_PATH,
+    build_executor_job,
+    build_table_bundle,
+    run_table_demo,
+)
+from ghostdata.planner.agent import StructuredSpecPlanner
 from ghostdata.verification import VerificationReport, VerificationSpec
-from ghostdata.verification.search import VerificationOrchestrator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "build" / "givemesomecredit_debug_3k.csv"
-WORKER_PATH = PROJECT_ROOT / "demo" / "credit_pipeline" / "worker.py"
 TARGET_COLUMN = "SeriousDlqin2yrs"
 TARGET_FEATURE = "MonthlyIncome"
 MODEL_RANDOM_STATE = 42
 MODEL_TEST_SIZE = 0.3
-DaytonaVerificationRunner = None
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class PreparedCreditDemo:
     data_path: Path
     reference: pd.DataFrame
     bundle: AnalysisBundle
-    planner: KnownFailurePlanner
+    planner: StructuredSpecPlanner
     baseline: float
 
     @property
@@ -121,30 +121,17 @@ def prepare_credit_demo(
 ) -> PreparedCreditDemo:
     path = Path(data_path).resolve()
     reference = load_credit_data(path)
-    baseline = credit_score(reference)(reference)
-    claim = Claim(
-        claim_id="C001",
-        assertion="The preprocessing change preserves model quality.",
-        evaluator="model_metric_preservation",
-        parameters={
-            "metric": "roc_auc",
-            "max_drop": 0.0,
-            "direction": "higher_is_better",
-        },
-        supplied_evidence={"roc_auc": baseline},
-    )
-    bundle = AnalysisBundle(
-        bundle_id="credit-preprocessing-demo",
-        task="Verify an agent-generated credit preprocessing change.",
-        inputs={"dataset": "dataset.csv"},
-        agent_output=AgentOutput(metrics={"roc_auc": baseline}),
-        claims=(claim,),
+    bundle, planner, baseline = build_table_bundle(
+        reference,
+        TARGET_COLUMN,
+        "credit-preprocessing-demo",
+        "Verify an agent-generated credit preprocessing change.",
     )
     return PreparedCreditDemo(
         data_path=path,
         reference=reference,
         bundle=bundle,
-        planner=KnownFailurePlanner(TARGET_FEATURE),
+        planner=planner,
         baseline=baseline,
     )
 
@@ -154,21 +141,8 @@ def build_daytona_job(
     bundle: AnalysisBundle,
     spec: VerificationSpec,
 ) -> "DaytonaJob":
-    from ghostdata.execution.daytona import DaytonaJob
-
-    files: dict[str, bytes] = {
-        "dataset.csv": prepared.data_path.read_bytes(),
-        "worker.py": WORKER_PATH.read_bytes(),
-    }
-    package_root = PROJECT_ROOT / "src" / "ghostdata"
-    for source_path in package_root.rglob("*.py"):
-        remote_path = (Path("src") / source_path.relative_to(PROJECT_ROOT / "src")).as_posix()
-        files[remote_path] = source_path.read_bytes()
-    return DaytonaJob(
-        command="PYTHONPATH=src python worker.py",
-        files=files,
-        evidence_path="evidence.json",
-    )
+    del bundle, spec
+    return build_executor_job(prepared.data_path, TARGET_COLUMN)
 
 
 def run_credit_demo(
@@ -176,32 +150,11 @@ def run_credit_demo(
     data_path: Path | str = DEFAULT_DATA_PATH,
     daytona_settings: "DaytonaSettings | None" = None,
 ) -> VerificationReport:
-    prepared = prepare_credit_demo(data_path)
-    if backend == "local":
-        runner = LocalVerificationRunner(
-            prepared.reference,
-            default_compiler(),
-            credit_invariants,
-            credit_score(prepared.reference),
-            metric="roc_auc",
-        )
-    elif backend == "daytona":
-        runner_class = DaytonaVerificationRunner
-        if runner_class is None:
-            from ghostdata.execution.daytona import DaytonaVerificationRunner as runner_class
-
-        load_dotenv(PROJECT_ROOT / ".env")
-        runner = runner_class(
-            lambda bundle, spec: build_daytona_job(prepared, bundle, spec),
-            settings=daytona_settings,
-        )
-    else:
-        raise ValueError(f"unsupported demo backend: {backend}")
-
-    evaluators = EvaluatorRegistry((ModelMetricPreservationEvaluator(),))
-    orchestrator = VerificationOrchestrator(runner, evaluators, max_workers=1)
-    return orchestrator.verify(
-        prepared.bundle,
-        BundleClaimExtractor(),
-        prepared.planner,
+    report, _spec, _analysis = run_table_demo(
+        data_path,
+        TARGET_COLUMN,
+        backend,
+        daytona_settings,
+        bundle_id="credit-preprocessing-demo",
     )
+    return report

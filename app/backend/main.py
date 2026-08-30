@@ -6,8 +6,11 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from ghostdata.demo import prepare_credit_demo, run_credit_demo
+from ghostdata.demo import prepare_credit_demo
 from ghostdata.demo.charts import attach_visuals
+from ghostdata.demo.credit import DEFAULT_DATA_PATH, TARGET_COLUMN
+from ghostdata.demo.table import run_table_demo
+from ghostdata.tabular import load_table
 from ghostdata.demo.artifacts import ARTIFACT_NAMES
 from ghostdata.demo.discovery import (
     DEFAULT_AGENT_PROFILES,
@@ -18,7 +21,6 @@ from ghostdata.demo.discovery import (
     load_discovery_run,
     run_credit_discovery,
 )
-from ghostdata.demo.credit import DEFAULT_DATA_PATH
 
 
 app = FastAPI(title="GhostData", version="0.1.0")
@@ -57,7 +59,19 @@ def verifications() -> list[dict[str, object]]:
 def run_demo(
     backend: Literal["local", "daytona"] = "local",
 ) -> dict[str, object]:
-    return attach_visuals(run_credit_demo(backend))
+    report, spec, analysis = run_table_demo(
+        DEFAULT_DATA_PATH, TARGET_COLUMN, backend
+    )
+    payload = attach_visuals(
+        report, load_table(DEFAULT_DATA_PATH, TARGET_COLUMN), spec
+    )
+    payload["proposal"] = {
+        "origin": spec.origin,
+        "experiment_type": spec.experiment_type,
+        "hypothesis": spec.hypothesis,
+        "inspected_columns": list(analysis.get("inspected_columns") or []),
+    }
+    return payload
 
 
 @app.post("/api/discovery/runs")

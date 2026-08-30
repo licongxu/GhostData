@@ -22,6 +22,8 @@ class DaytonaSettings:
     command_timeout_seconds: int = 180
     auto_stop_minutes: int = 10
     network_block_all: bool = True
+    volume_name: str | None = None
+    volume_mount: str = "/data"
 
 
 @dataclass(frozen=True)
@@ -30,12 +32,39 @@ class DaytonaJob:
     files: Mapping[str, bytes] = field(default_factory=dict)
     evidence_path: str = "evidence.json"
     download_paths: Mapping[str, str] = field(default_factory=dict)
+    role: str = "executor"
+    extra_labels: Mapping[str, str] = field(default_factory=dict)
+    env_vars: Mapping[str, str] = field(default_factory=dict)
+    network_block_all: bool | None = None
 
 
 JobFactory = Callable[[AnalysisBundle, VerificationSpec], DaytonaJob]
 ArtifactSink = Callable[
     [AnalysisBundle, VerificationSpec, Mapping[str, bytes]], Mapping[str, str]
 ]
+
+
+def _safe_relative_path(relative_path: str) -> str:
+    normalized = posixpath.normpath(relative_path)
+    if (
+        normalized in {"", ".", ".."}
+        or normalized.startswith("/")
+        or normalized.startswith("../")
+    ):
+        raise ValueError(f"job path must stay inside the work directory: {relative_path}")
+    return normalized
+
+
+def _volume_mounts(client: Any, settings: DaytonaSettings) -> list[Any] | None:
+    volume_service = getattr(client, "volume", None)
+    if not settings.volume_name or volume_service is None:
+        return None
+    from daytona import VolumeMount
+
+    volume = volume_service.get(settings.volume_name, create=True)
+    return [
+        VolumeMount(volume_id=volume.id, mount_path=settings.volume_mount)
+    ]
 
 
 class DaytonaVerificationRunner:
@@ -78,6 +107,7 @@ class DaytonaVerificationRunner:
         try:
             labels = {
                 "project": "ghostdata",
+                "role": job.role,
                 "bundle_id": bundle.bundle_id,
                 "claim_id": spec.claim_id,
                 "verification_id": spec.verification_id,
@@ -87,6 +117,14 @@ class DaytonaVerificationRunner:
                 value = spec.parameters.get(key)
                 if isinstance(value, str) and value:
                     labels[key] = value
+            for key, value in job.extra_labels.items():
+                if isinstance(key, str) and key and isinstance(value, str) and value:
+                    labels[key] = value
+            blocked = (
+                self._settings.network_block_all
+                if job.network_block_all is None
+                else job.network_block_all
+            )
             sandbox = self._client.create(
                 CreateSandboxFromSnapshotParams(
                     snapshot=self._settings.snapshot,
@@ -94,7 +132,9 @@ class DaytonaVerificationRunner:
                     ephemeral=True,
                     labels=labels,
                     auto_stop_interval=self._settings.auto_stop_minutes,
-                    network_block_all=self._settings.network_block_all,
+                    network_block_all=blocked,
+                    env_vars=dict(job.env_vars) or None,
+                    volumes=_volume_mounts(self._client, self._settings),
                 ),
                 timeout=self._settings.create_timeout_seconds,
             )
@@ -147,6 +187,7 @@ class DaytonaVerificationRunner:
             "experiment_type",
             "agent_id",
             "discovery_id",
+            "role",
         )
         return [
             {
@@ -184,11 +225,81 @@ class DaytonaVerificationRunner:
             )
 
     def _remote_path(self, relative_path: str) -> str:
-        normalized = posixpath.normpath(relative_path)
-        if (
-            normalized in {"", ".", ".."}
-            or normalized.startswith("/")
-            or normalized.startswith("../")
-        ):
-            raise ValueError(f"job path must stay inside the work directory: {relative_path}")
-        return posixpath.join(self._settings.work_dir, normalized)
+        return posixpath.join(self._settings.work_dir, _safe_relative_path(relative_path))
+
+
+class DaytonaProposalRunner:
+    """Inspect a table inside an isolated sandbox and return a VerificationSpec."""
+
+    def __init__(
+        self,
+        settings: DaytonaSettings | None = None,
+        client: Any | None = None,
+    ) -> None:
+        self._settings = settings or DaytonaSettings()
+        self._client = client or Daytona(DaytonaConfig(use_deprecated_polling=False))
+
+    def propose(
+        self,
+        bundle: AnalysisBundle,
+        files: Mapping[str, bytes],
+        label_column: str,
+        claim_id: str,
+    ) -> tuple[list[VerificationSpec], dict[str, Any]]:
+        work = self._settings.work_dir
+        remote_files: dict[str, bytes] = {
+            posixpath.join(work, _safe_relative_path(relative_path)): contents
+            for relative_path, contents in files.items()
+        }
+        sandbox = None
+        try:
+            sandbox = self._client.create(
+                CreateSandboxFromSnapshotParams(
+                    snapshot=self._settings.snapshot,
+                    language="python",
+                    ephemeral=True,
+                    labels={
+                        "project": "ghostdata",
+                        "role": "proposer",
+                        "bundle_id": bundle.bundle_id,
+                        "claim_id": claim_id,
+                    },
+                    auto_stop_interval=self._settings.auto_stop_minutes,
+                    network_block_all=True,
+                    volumes=_volume_mounts(self._client, self._settings),
+                ),
+                timeout=self._settings.create_timeout_seconds,
+            )
+            sandbox.process.exec(f"mkdir -p {shlex.quote(work)}")
+            interpreter = getattr(sandbox, "code_interpreter", None)
+            if interpreter is not None:
+                interpreter.run_code("print('ghostdata-proposer-ready')")
+            for remote, contents in remote_files.items():
+                parent = posixpath.dirname(remote)
+                sandbox.process.exec(f"mkdir -p {shlex.quote(parent)}")
+                sandbox.fs.upload_file(contents, remote)
+            create_session = getattr(sandbox.process, "create_session", None)
+            if callable(create_session):
+                create_session("proposer")
+            response = sandbox.process.exec(
+                "PYTHONPATH=src python proposer.py",
+                cwd=work,
+                timeout=self._settings.command_timeout_seconds,
+            )
+            if response.exit_code != 0:
+                raise RuntimeError(
+                    f"proposer exited {response.exit_code}: {response.result.strip()}"
+                )
+            spec = VerificationSpec.from_dict(
+                json.loads(sandbox.fs.download_file(posixpath.join(work, "verification.json")))
+            )
+            analysis = json.loads(
+                sandbox.fs.download_file(posixpath.join(work, "analysis.json"))
+            )
+            delete_session = getattr(sandbox.process, "delete_session", None)
+            if callable(delete_session):
+                delete_session("proposer")
+            return [spec], analysis
+        finally:
+            if sandbox is not None:
+                self._client.delete(sandbox, wait=True)

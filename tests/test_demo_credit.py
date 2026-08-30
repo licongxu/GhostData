@@ -1,21 +1,27 @@
+import json
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 import ghostdata.demo.credit as credit
+import ghostdata.demo.table as table
 from ghostdata.execution.local import LocalVerificationRunner, default_compiler
+from ghostdata.tabular import feature_invariants, feature_score
 
 
 def test_prepare_credit_demo_uses_real_dataset_and_measured_baseline() -> None:
     prepared = credit.prepare_credit_demo()
+    spec = prepared.specs[0]
 
     assert prepared.data_path == credit.DEFAULT_DATA_PATH.resolve()
     assert prepared.reference.shape == (3000, 11)
-    assert prepared.baseline == pytest.approx(0.5536616071428572)
     assert prepared.bundle.agent_output.metrics["roc_auc"] == prepared.baseline
     assert prepared.bundle.inputs == {"dataset": "dataset.csv"}
-    assert prepared.specs[0].parameters["target_feature"] == "MonthlyIncome"
+    assert spec.origin == "sandbox_agent"
+    assert spec.experiment_type == "entity_alignment"
+    assert spec.parameters["target_feature"] in prepared.reference.columns
+    assert spec.parameters["target_feature"] != credit.TARGET_COLUMN
 
 
 def test_credit_invariants_detect_preserved_and_changed_values() -> None:
@@ -23,6 +29,7 @@ def test_credit_invariants_detect_preserved_and_changed_values() -> None:
     before = prepared.reference.head(20).copy()
 
     assert all(credit.credit_invariants(before, before.copy()).values())
+    assert credit.credit_score(prepared.reference)(prepared.reference) > 0.5
 
     changed = before.copy()
     changed.loc[changed.index[0], "MonthlyIncome"] = 999999
@@ -60,9 +67,13 @@ def test_build_daytona_job_contains_dataset_worker_and_package() -> None:
     )
 
     assert job.command == "PYTHONPATH=src python worker.py"
+    assert job.role == "executor"
     assert job.files["dataset.csv"] == prepared.data_path.read_bytes()
     assert job.files["worker.py"] == credit.WORKER_PATH.read_bytes()
+    assert b"MonthlyIncome" not in job.files["worker.py"]
     assert "src/ghostdata/bundle/analysis.py" in job.files
+    task = json.loads(job.files["task.json"])
+    assert task["label_column"] == credit.TARGET_COLUMN
 
 
 def test_run_credit_demo_local_returns_real_counterexample() -> None:
@@ -71,30 +82,43 @@ def test_run_credit_demo_local_returns_real_counterexample() -> None:
     assert report.verdict == "not_verified"
     assert len(report.ghosts) == 1
     measurements = report.ghosts[0].measurements
-    assert measurements["baseline"] == pytest.approx(0.5536616071428572)
-    assert measurements["candidate"] == pytest.approx(0.5316732142857142)
+    assert measurements["candidate"] < measurements["baseline"]
+
+
+def _stub_daytona(monkeypatch: pytest.MonkeyPatch) -> None:
+    prepared = credit.prepare_credit_demo()
+    spec = prepared.specs[0]
+    feature = str(spec.parameters["target_feature"])
+    analysis = dict(prepared.planner.last_analysis or {})
+    fake_runner = LocalVerificationRunner(
+        prepared.reference,
+        default_compiler(),
+        feature_invariants(feature),
+        feature_score(prepared.reference, credit.TARGET_COLUMN, feature),
+        "roc_auc",
+    )
+
+    class FakeProposal:
+        def __init__(self, settings=None, client=None) -> None:
+            del settings, client
+
+        def propose(self, bundle, files, label_column, claim_id):
+            del bundle, files, label_column, claim_id
+            return [spec], analysis
+
+    monkeypatch.setattr(table, "DaytonaProposalRunner", FakeProposal)
+    monkeypatch.setattr(
+        table,
+        "DaytonaVerificationRunner",
+        lambda job_factory, settings=None: fake_runner,
+    )
 
 
 def test_run_credit_demo_daytona_branch_uses_injected_runner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prepared = credit.prepare_credit_demo()
-    fake_runner = LocalVerificationRunner(
-        prepared.reference,
-        default_compiler(),
-        credit.credit_invariants,
-        credit.credit_score(prepared.reference),
-        "roc_auc",
-    )
-    monkeypatch.setattr(
-        credit,
-        "DaytonaVerificationRunner",
-        lambda job_factory, settings=None: fake_runner,
-    )
-
-    report = credit.run_credit_demo("daytona")
-
-    assert report.verdict == "not_verified"
+    _stub_daytona(monkeypatch)
+    assert credit.run_credit_demo("daytona").verdict == "not_verified"
 
 
 def test_run_credit_demo_lazily_imports_daytona_runner(
@@ -103,14 +127,28 @@ def test_run_credit_demo_lazily_imports_daytona_runner(
     import ghostdata.execution.daytona as daytona
 
     prepared = credit.prepare_credit_demo()
+    spec = prepared.specs[0]
+    feature = str(spec.parameters["target_feature"])
+    analysis = dict(prepared.planner.last_analysis or {})
     fake_runner = LocalVerificationRunner(
         prepared.reference,
         default_compiler(),
-        credit.credit_invariants,
-        credit.credit_score(prepared.reference),
+        feature_invariants(feature),
+        feature_score(prepared.reference, credit.TARGET_COLUMN, feature),
         "roc_auc",
     )
-    monkeypatch.setattr(credit, "DaytonaVerificationRunner", None)
+
+    class FakeProposal:
+        def __init__(self, settings=None, client=None) -> None:
+            del settings, client
+
+        def propose(self, bundle, files, label_column, claim_id):
+            del bundle, files, label_column, claim_id
+            return [spec], analysis
+
+    monkeypatch.setattr(table, "DaytonaProposalRunner", None)
+    monkeypatch.setattr(table, "DaytonaVerificationRunner", None)
+    monkeypatch.setattr(daytona, "DaytonaProposalRunner", FakeProposal)
     monkeypatch.setattr(
         daytona,
         "DaytonaVerificationRunner",

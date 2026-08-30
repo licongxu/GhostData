@@ -51,10 +51,11 @@ def test_metric_and_visual_fallbacks_reject_missing_feature() -> None:
 
     prepared = prepare_credit_demo()
     spec = prepared.specs[0]
+    feature = str(spec.parameters["target_feature"])
     with pytest.raises(ValueError, match="perturbed feature missing"):
         charts.build_visuals(
             prepared.reference,
-            prepared.reference.drop(columns=["MonthlyIncome"]),
+            prepared.reference.drop(columns=[feature]),
             report,
             spec,
         )
@@ -63,7 +64,7 @@ def test_metric_and_visual_fallbacks_reject_missing_feature() -> None:
         prepared.reference, prepared.reference.copy(), report, spec
     )
     assert payload["invariants"] == {}
-    assert payload["perturbed_feature"] == "MonthlyIncome"
+    assert payload["perturbed_feature"] == feature
 
 
 def test_metric_block_ignores_invalid_ghost_measurements() -> None:
