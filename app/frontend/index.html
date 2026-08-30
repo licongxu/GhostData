@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GhostData</title>
+    <style>
+      :root {
+        --bg: #101114;
+        --panel: #181a1f;
+        --ink: #f4f1e8;
+        --muted: #aaa69d;
+        --line: #34363b;
+        --accent: #e8ff67;
+        --reference: #7aa2f7;
+        --pass: #9be7a4;
+        --fail: #ff8a7a;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, sans-serif; }
+      main { max-width: 1120px; margin: 0 auto; padding: 36px 24px 64px; }
+      h1 { font-size: clamp(40px, 7vw, 72px); margin: 0; letter-spacing: -0.06em; }
+      .lede { color: var(--muted); font-size: 20px; max-width: 42rem; }
+      code { color: var(--accent); }
+      button {
+        margin: 8px 12px 0 0; padding: 12px 18px; border: 0; border-radius: 8px;
+        background: var(--accent); color: #111; font-weight: 650; cursor: pointer;
+      }
+      button.secondary { background: #2a2d34; color: var(--ink); }
+      button:disabled { opacity: 0.55; cursor: wait; }
+      article, .panel {
+        margin-top: 20px; padding: 20px; border: 1px solid var(--line);
+        border-radius: 12px; background: var(--panel);
+      }
+      #charts { display: grid; gap: 16px; margin-top: 20px; }
+      @media (min-width: 860px) {
+        #charts { grid-template-columns: 1fr 1fr; }
+        #charts > article:only-child,
+        #charts > article:nth-child(n + 3) { grid-column: 1 / -1; }
+      }
+      .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+      .stat { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+      .stat b { display: block; font-size: 22px; letter-spacing: -0.03em; }
+      .stat span { color: var(--muted); font-size: 13px; }
+      .pass { color: var(--pass); }
+      .fail { color: var(--fail); }
+      h3 { margin: 0; font-size: 16px; }
+      .muted { color: var(--muted); font-size: 14px; }
+      figure { margin: 0; }
+      svg { width: 100%; height: 280px; display: block; }
+      .legend { display: flex; gap: 16px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+      .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+      details { margin-top: 24px; color: var(--muted); }
+      pre { margin-top: 12px; padding: 18px; overflow: auto; background: #12141a; border-radius: 10px; color: #d7d3c8; }
+      .headline { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.05em; margin: 28px 0 0; }
+      #result { min-height: 1.5em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GhostData</h1>
+      <p class="lede">Independent, execution-based verification for AI data-analysis agents. Existing checks can pass while the model’s relationships break.</p>
+      <section id="verifications">Planning counterexample experiments…</section>
+      <p>
+        <button data-backend="local">Run on local backend</button>
+        <button class="secondary" data-backend="daytona">Run in Daytona</button>
+      </p>
+      <p id="result">Choose a backend to run a verification. Charts are built from whichever columns the experiment touches.</p>
+
+      <section id="ghost" hidden>
+        <p class="headline" id="headline">Same values. Different relationships.</p>
+        <div class="stats">
+          <div class="stat"><span>Existing checks</span><b id="check-stat"></b></div>
+          <div class="stat"><span id="metric-label">Model metric</span><b id="metric-stat"></b></div>
+          <div class="stat"><span id="affected-label">Affected rows</span><b id="affected-stat"></b></div>
+        </div>
+        <div id="charts"></div>
+      </section>
+
+      <details id="raw">
+        <summary>Raw verification report</summary>
+        <pre id="raw-json"></pre>
+      </details>
+    </main>
+    <script>
+      const REF = "#7aa2f7";
+      const GHOST = "#e8ff67";
+
+      fetch("/api/verifications").then((response) => response.json()).then((verifications) => {
+        document.querySelector("#verifications").innerHTML = verifications.map((spec) => `
+          <article><code>${spec.verification_id} · ${spec.experiment_type}</code><p>${spec.hypothesis}</p></article>
+        `).join("");
+      });
+
+      function clear(svg) {
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+      }
+
+      function node(name, attrs) {
+        const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+        Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+        return el;
+      }
+
+      function niceMax(value) {
+        if (value <= 0) return 1;
+        const pow = Math.pow(10, Math.floor(Math.log10(value)));
+        return Math.ceil(value / pow) * pow;
+      }
+
+      function compact(value) {
+        const abs = Math.abs(value);
+        if (abs >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+        if (abs >= 1000) return `${(value / 1000).toFixed(1)}k`;
+        if (abs > 0 && abs < 1) return value.toFixed(2);
+        return String(Math.round(value * 100) / 100);
+      }
+
+      function pct(value) {
+        return `${(100 * value).toFixed(1)}%`;
+      }
+
+      function fmt(value, digits) {
+        return Number(value).toFixed(digits);
+      }
+
+      function drawAxes(svg, width, height, pad, yMax, yFormat) {
+        svg.appendChild(node("line", {
+          x1: pad.left, y1: pad.top, x2: pad.left, y2: height - pad.bottom,
+          stroke: "#34363b",
+        }));
+        svg.appendChild(node("line", {
+          x1: pad.left, y1: height - pad.bottom, x2: width - pad.right, y2: height - pad.bottom,
+          stroke: "#34363b",
+        }));
+        for (let i = 0; i <= 4; i += 1) {
+          const y = pad.top + ((height - pad.top - pad.bottom) * i) / 4;
+          const value = yMax * (1 - i / 4);
+          svg.appendChild(node("text", {
+            x: pad.left - 8, y: y + 4, fill: "#aaa69d", "font-size": "11", "text-anchor": "end",
+          })).textContent = yFormat(value);
+        }
+      }
+
+      function overlayBars(svg, midpoints, reference, ghost) {
+        clear(svg);
+        const width = 640, height = 280;
+        const pad = { top: 16, right: 16, bottom: 36, left: 48 };
+        const innerW = width - pad.left - pad.right;
+        const innerH = height - pad.top - pad.bottom;
+        const yMax = niceMax(Math.max(...reference, ...ghost, 1));
+        const n = midpoints.length;
+        const gap = 2;
+        const barW = Math.max(4, innerW / n - gap);
+        drawAxes(svg, width, height, pad, yMax, (v) => Math.round(v));
+        midpoints.forEach((mid, i) => {
+          const x = pad.left + (i + 0.5) * (innerW / n) - barW / 2;
+          const hRef = (reference[i] / yMax) * innerH;
+          const hGhost = (ghost[i] / yMax) * innerH;
+          svg.appendChild(node("rect", {
+            x, y: height - pad.bottom - hGhost, width: barW, height: hGhost,
+            fill: GHOST, opacity: "0.85",
+          }));
+          svg.appendChild(node("rect", {
+            x, y: height - pad.bottom - hRef, width: barW, height: hRef,
+            fill: "none", stroke: REF, "stroke-width": "1.6",
+          }));
+          if (i % 4 === 0) {
+            svg.appendChild(node("text", {
+              x: x + barW / 2, y: height - 12, fill: "#aaa69d", "font-size": "11", "text-anchor": "middle",
+            })).textContent = compact(mid);
+          }
+        });
+      }
+
+      function groupedBars(svg, labels, reference, ghost, yFormat) {
+        clear(svg);
+        const width = 640, height = 280;
+        const pad = { top: 16, right: 16, bottom: 48, left: 52 };
+        const innerW = width - pad.left - pad.right;
+        const innerH = height - pad.top - pad.bottom;
+        const numeric = [...reference, ...ghost].map((v) => Number(v) || 0);
+        const yMax = niceMax(Math.max(...numeric, 0.01));
+        const n = Math.max(labels.length, 1);
+        const groupW = innerW / n;
+        const barW = Math.max(10, groupW * 0.32);
+        drawAxes(svg, width, height, pad, yMax, yFormat);
+        labels.forEach((label, i) => {
+          const center = pad.left + (i + 0.5) * groupW;
+          const hRef = ((Number(reference[i]) || 0) / yMax) * innerH;
+          const hGhost = ((Number(ghost[i]) || 0) / yMax) * innerH;
+          svg.appendChild(node("rect", {
+            x: center - barW - 2, y: height - pad.bottom - hRef, width: barW, height: hRef, fill: REF,
+          }));
+          svg.appendChild(node("rect", {
+            x: center + 2, y: height - pad.bottom - hGhost, width: barW, height: hGhost, fill: GHOST,
+          }));
+          svg.appendChild(node("text", {
+            x: center, y: height - 14, fill: "#aaa69d", "font-size": "11", "text-anchor": "middle",
+          })).textContent = label;
+        });
+      }
+
+      function yFormatter(chart) {
+        if (chart.y_format === "percent") return pct;
+        return compact;
+      }
+
+      function renderChart(chart) {
+        const article = document.createElement("article");
+        const heading = document.createElement("h3");
+        heading.textContent = chart.title;
+        const caption = document.createElement("p");
+        caption.className = "muted";
+        caption.textContent = chart.caption;
+        const figure = document.createElement("figure");
+        const svg = node("svg", { viewBox: "0 0 640 280", role: "img" });
+        svg.setAttribute("aria-label", chart.title);
+        const legend = document.createElement("div");
+        legend.className = "legend";
+        legend.innerHTML = '<span><i class="swatch" style="background:#7aa2f7"></i>Reference</span><span><i class="swatch" style="background:#e8ff67"></i>Ghost</span>';
+        figure.append(svg, legend);
+        article.append(heading, caption, figure);
+        if (chart.kind === "overlay_histogram") {
+          overlayBars(svg, chart.bin_midpoints, chart.reference, chart.ghost);
+        } else {
+          groupedBars(svg, chart.labels, chart.reference, chart.ghost, yFormatter(chart));
+        }
+        return article;
+      }
+
+      function renderVisuals(payload) {
+        const visuals = payload.visuals;
+        const ghost = document.querySelector("#ghost");
+        const mount = document.querySelector("#charts");
+        mount.replaceChildren();
+        if (!visuals) {
+          ghost.hidden = true;
+          return;
+        }
+        ghost.hidden = false;
+        document.querySelector("#headline").textContent = visuals.headline;
+        const passed = Object.values(visuals.invariants).filter(Boolean).length;
+        const total = Object.keys(visuals.invariants).length;
+        document.querySelector("#check-stat").className = passed === total ? "pass" : "fail";
+        document.querySelector("#check-stat").textContent = `${passed} / ${total} PASS`;
+        const metric = visuals.metric;
+        document.querySelector("#metric-label").textContent = metric.name;
+        document.querySelector("#metric-stat").className = "fail";
+        document.querySelector("#metric-stat").textContent =
+          metric.baseline == null ? "—" : `${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`;
+        document.querySelector("#affected-label").textContent = `Shuffled ${visuals.perturbed_feature}`;
+        document.querySelector("#affected-stat").textContent = pct(metric.affected_fraction);
+        (visuals.charts || []).forEach((chart) => mount.append(renderChart(chart)));
+        document.querySelector("#raw-json").textContent = JSON.stringify(payload, null, 2);
+      }
+
+      document.querySelectorAll("button[data-backend]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const backend = button.dataset.backend;
+          const result = document.querySelector("#result");
+          const buttons = document.querySelectorAll("button[data-backend]");
+          buttons.forEach((item) => { item.disabled = true; });
+          result.textContent = `Running in ${backend}…`;
+          try {
+            const response = await fetch(`/api/demo/run?backend=${backend}`, { method: "POST" });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || response.statusText);
+            const verdict = payload.verdict === "not_verified" ? "GHOST FOUND" : payload.verdict;
+            const metric = payload.visuals && payload.visuals.metric;
+            const metricText = metric && metric.name
+              ? `${metric.name} ${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`
+              : "model quality dropped";
+            result.innerHTML = `<strong class="fail">${verdict}</strong> · checks still pass, ${metricText}.`;
+            renderVisuals(payload);
+          } catch (error) {
+            result.textContent = `Run failed: ${error.message}`;
+            document.querySelector("#ghost").hidden = true;
+          } finally {
+            buttons.forEach((item) => { item.disabled = false; });
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,2 @@
+"""GhostData demo application."""
+

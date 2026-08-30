@@ -187,7 +187,8 @@ Prefer single-file or single-test runs during iteration. Full suites are for the
 
 When the user corrects your approach, append a one-line rule here before ending the session. Write it concretely ("Always use X for Y"), never abstractly ("be careful with Y"). If an existing line already covers the correction, tighten it instead of adding a new one. Remove lines when the underlying issue goes away (model upgrades, refactors, process changes).
 
-- (empty)
+- When the discovery demo is requested in Daytona, local execution is preflight only;
+  completion requires a successful live Daytona run and sandbox cleanup audit.
 
 ---
 

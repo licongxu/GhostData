@@ -3,11 +3,14 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+htmlcov/
 .ipynb_checkpoints/
 artifacts/
 ghosts/
 *.parquet
 *.joblib
 *.pkl
+data/*.csv
 node_modules/
 dist/

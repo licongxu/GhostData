@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostdata"
+version = "0.1.0"
+description = "Adversarial CI for ML data pipelines"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--cov=ghostdata",
+    "--cov=app.backend",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-fail-under=98",
+]
