@@ -2,37 +2,32 @@
 
 **Find the data-pipeline failure your tests already passed.**
 
-GhostData searches for a plausible preprocessing failure that **passes existing checks** and still **breaks the frozen model**. That measured counterexample is a **Ghost**.
+GhostData does not attack the model with noise. It **simulates a failed data world** — for example valid feature values attached to the wrong rows — then asks whether that world would still look fine to your existing checks while the frozen model quietly degrades. If yes, that simulated dataset is a **Ghost**.
 
 Not a drift dashboard. Not Great Expectations. Not an LLM inventing scary stories.
 
 ## Architecture
 
-Codex proposes. Daytona proves. The host never invents an AUC.
+The analyst only hypothesizes the failure. **Daytona simulates the world**: it applies the transform to your real table, materializes the simulated dataset, runs the checks you already trust, and scores the frozen model. Then the sandbox is deleted. The host never invents an AUC.
 
 ```mermaid
 flowchart TB
-  U["Labeled CSV + prompt"] --> P["Analyst proposes worlds<br/>Codex, or pandas if no login"]
+  R["Your labeled CSV + prompt"] --> A["Analyst hypothesizes a silent failure<br/>Codex, or pandas if no login"]
 
-  P --> S1["Daytona sandbox"]
-  P --> S2["Daytona sandbox"]
-  P --> S3["Daytona sandbox"]
+  A --> D["Daytona simulates that world<br/>one ephemeral sandbox per hypothesis"]
+  D --> S["Simulated dataset<br/>same schema, same values, wrong relationships"]
 
-  S1 --> T["Apply transform"]
-  S2 --> T
-  S3 --> T
+  S --> C{"Existing checks<br/>schema · marginals · missingness"}
+  C -->|fail| X["Reject<br/>your tests already catch it"]
+  C -->|pass| M{"Frozen model"}
 
-  T --> K{"Existing checks<br/>schema · marginals · missingness"}
-  K -->|fail| X["Reject"]
-  K -->|pass| M{"Frozen model"}
-
-  M -->|metric drops| G["Ghost"]
-  M -->|no drop| H["Harmless"]
+  M -->|quality holds| H["Harmless simulation"]
+  M -->|quality drops| G["Ghost<br/>simulated data that looks valid<br/>and still breaks the model"]
 
   G --> Pack["Ghost pack<br/>transform.py · ghost_dataset.csv<br/>model_report.json · regression_contract.py"]
 ```
 
-Each world runs in its own ephemeral Daytona sandbox with the real checks and the frozen model, then the sandbox is deleted. A Ghost is only declared from **measured** evidence: checks stay green **and** the model metric drops.
+A Ghost is measured, not narrated: the simulated world must pass the checks **and** drop the frozen-model metric. Several hypotheses can run in parallel; leftover sandboxes should be `0`.
 
 ## Quick start
 
@@ -59,8 +54,6 @@ python scripts/run_discovery.py --backend daytona --dataset debug --max-specs 2
 python scripts/run_redteam.py --csv data/build/givemesomecredit_debug_3k.csv \
   --prompt "Predict default; SeriousDlqin2yrs is the label."
 ```
-
-A leftover-sandbox count of `0` after a Daytona run is expected.
 
 ## Layout
 
