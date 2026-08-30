@@ -413,7 +413,7 @@
     <div class="overlay" id="overlay">
       <form class="sheet" id="try-form">
         <h2>Try it</h2>
-        <p class="hint">CSV + prediction task. One Daytona sandbox per hypothesis. Ghost = checks pass, model drops.</p>
+        <p class="hint">Example tables and Run use the local fast path. Upload a CSV only if you want a live Daytona run.</p>
         <label>CSV upload
           <div class="drop" id="drop">Drop a CSV here, or click to choose</div>
           <input id="upload" type="file" accept=".csv,text/csv" />
@@ -429,7 +429,8 @@
           <textarea id="prompt">Predict default. SeriousDlqin2yrs is the target. Find plausible preprocessing or pipeline failures that schema, missingness and marginal checks could miss.</textarea>
         </label>
         <div class="actions">
-          <button class="cta" id="run" type="submit">Run on Daytona</button>
+          <button class="cta" id="run" type="submit">Run</button>
+          <button class="cta ghost-btn" id="run-daytona" type="button">Run on Daytona</button>
           <button class="cta ghost-btn" id="close-try" type="button">Cancel</button>
         </div>
       </form>
@@ -633,7 +634,8 @@
         $("#preview-body").innerHTML = "<p class='hint'>Loading preview…</p>";
         $("#preview-overlay").classList.add("open");
         try {
-          const response = await fetch(href);
+          const previewUrl = role === "degraded_dataset" ? `${href}?preview=1` : href;
+          const response = await fetch(previewUrl);
           const text = await response.text();
           if (!response.ok) throw new Error(text || response.statusText);
           if (role === "degraded_dataset") $("#preview-body").innerHTML = csvTable(text);
@@ -709,14 +711,26 @@
             $("#progress").textContent += `\n\nFAILED: ${payload.error || "run failed"}`;
             throw new Error(payload.error || "run failed");
           }
-          await new Promise((resolve) => setTimeout(resolve, 1200));
+          await new Promise((resolve) => setTimeout(resolve, 250));
         }
       }
 
       async function startRun(event) {
         event.preventDefault();
+        const upload = $("#upload").files[0];
+        if (!upload) {
+          closeTry();
+          await runExample($("#dataset").value);
+          return;
+        }
+        await startDaytonaRun();
+      }
+
+      async function startDaytonaRun() {
         const button = $("#run");
+        const live = $("#run-daytona");
         button.disabled = true;
+        live.disabled = true;
         closeTry();
         $("#run-kicker").textContent = "Live Daytona run";
         $("#progress").textContent = "Creating Daytona analyst sandbox…";
@@ -741,6 +755,7 @@
           $("#progress").textContent += `\n\nRun failed: ${error.message}`;
         } finally {
           button.disabled = false;
+          live.disabled = false;
         }
       }
 
@@ -790,6 +805,7 @@
         $("#prompt").value = prompts[event.target.value] || prompts.credit;
       });
       $("#try-form").addEventListener("submit", startRun);
+      $("#run-daytona").addEventListener("click", startDaytonaRun);
       $("#drop").addEventListener("click", () => $("#upload").click());
       $("#upload").addEventListener("change", () => {
         const file = $("#upload").files[0];

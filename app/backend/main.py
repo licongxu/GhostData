@@ -1,5 +1,6 @@
 """Thin HTTP surface for the hackathon demo."""
 
+import asyncio
 import re
 import shutil
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from ghostdata.demo import prepare_credit_demo
 from ghostdata.demo.charts import attach_visuals
@@ -46,6 +47,17 @@ FIXTURES = {
 }
 
 
+def _pack_urls(pack_id: str) -> dict[str, str]:
+    return {
+        role: f"/api/demo/packs/{pack_id}/artifacts/{role}" for role in ARTIFACT_NAMES
+    }
+
+
+def _pack_ready(pack_id: str) -> bool:
+    root = DEMO_PACK_ROOT / pack_id
+    return all((root / filename).is_file() for filename in ARTIFACT_NAMES.values())
+
+
 def _publish_demo_pack(
     pack_id: str,
     data_path: Path,
@@ -69,6 +81,8 @@ def _publish_demo_pack(
         return None
     if not PACK_ID_RE.fullmatch(pack_id):
         raise ValueError("invalid pack id")
+    if _pack_ready(pack_id):
+        return _pack_urls(pack_id)
     destination = DEMO_PACK_ROOT / pack_id
     if destination.exists():
         shutil.rmtree(destination)
@@ -92,9 +106,7 @@ def _publish_demo_pack(
         },
         destination,
     )
-    return {
-        role: f"/api/demo/packs/{pack_id}/artifacts/{role}" for role in ARTIFACT_NAMES
-    }
+    return _pack_urls(pack_id)
 
 
 def _public_run(report: dict[str, object]) -> dict[str, object]:
@@ -173,20 +185,20 @@ def redteam_artifact(run_id: str, role: str) -> FileResponse:
     return FileResponse(path, media_type=media_types[role], filename=path.name)
 
 
-@app.post("/api/demo/run")
-async def run_demo(
-    backend: Literal["local", "daytona"] = "local",
-    dataset: Literal["credit", "approval", "german"] = "credit",
-    label_column: str | None = None,
-    file: UploadFile | None = File(default=None),
+def _execute_demo(
+    backend: Literal["local", "daytona"],
+    dataset: Literal["credit", "approval", "german"],
+    label_column: str | None,
+    csv_bytes: bytes | None,
+    filename: str | None,
 ) -> dict[str, object]:
-    if file is not None and file.filename:
+    if csv_bytes is not None and filename:
         if not label_column or not label_column.strip():
-            raise HTTPException(status_code=400, detail="label_column is required for uploads")
-        suffix = Path(file.filename).suffix or ".csv"
+            raise ValueError("label_column is required for uploads")
+        suffix = Path(filename).suffix or ".csv"
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / f"upload{suffix}"
-            path.write_bytes(await file.read())
+            path.write_bytes(csv_bytes)
             column = label_column.strip()
             report, spec, analysis = run_table_demo(path, column, backend)
             payload = attach_visuals(report, load_table(path, column), spec)
@@ -197,7 +209,9 @@ async def run_demo(
     else:
         data_path, fixture_label = FIXTURES[dataset]
         column = (label_column or fixture_label).strip()
-        report, spec, analysis = run_table_demo(data_path, column, backend)
+        report, spec, analysis = run_table_demo(
+            data_path, column, backend, max_specs=2
+        )
         payload = attach_visuals(report, load_table(data_path, column), spec)
         payload["artifacts"] = _publish_demo_pack(
             dataset, data_path, column, report, spec, analysis
@@ -215,13 +229,39 @@ async def run_demo(
     return payload
 
 
-@app.get("/api/demo/packs/{pack_id}/artifacts/{role}")
-def demo_pack_artifact(pack_id: str, role: str) -> FileResponse:
+@app.post("/api/demo/run")
+async def run_demo(
+    backend: Literal["local", "daytona"] = "local",
+    dataset: Literal["credit", "approval", "german"] = "credit",
+    label_column: str | None = None,
+    file: UploadFile | None = File(default=None),
+) -> dict[str, object]:
+    csv_bytes = None
+    filename = None
+    if file is not None and file.filename:
+        csv_bytes = await file.read()
+        filename = file.filename
+    try:
+        return await asyncio.to_thread(
+            _execute_demo, backend, dataset, label_column, csv_bytes, filename
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/demo/packs/{pack_id}/artifacts/{role}", response_model=None)
+def demo_pack_artifact(
+    pack_id: str, role: str, preview: bool = False
+):
     if not PACK_ID_RE.fullmatch(pack_id) or role not in ARTIFACT_NAMES:
         raise HTTPException(status_code=404, detail="artifact not found")
     path = DEMO_PACK_ROOT / pack_id / ARTIFACT_NAMES[role]
     if not path.is_file():
         raise HTTPException(status_code=404, detail="artifact not found")
+    if preview:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            lines = "".join(handle.readline() for _ in range(16))
+        return PlainTextResponse(lines)
     media_types = {
         "transform_code": "text/x-python",
         "degraded_dataset": "text/csv",

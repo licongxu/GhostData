@@ -61,6 +61,9 @@ def test_demo_run_endpoint_executes_real_local_backend() -> None:
     assert dataset.status_code == 200
     assert dataset.headers["content-type"].startswith("text/csv")
     assert "transform.py" not in dataset.text[:80]
+    preview = client.get(payload["artifacts"]["degraded_dataset"] + "?preview=1")
+    assert preview.status_code == 200
+    assert len(preview.text.splitlines()) <= 16
     assert client.get("/api/demo/packs/missing/artifacts/model_report").status_code == 404
     assert client.get("/api/demo/packs/credit/artifacts/unknown").status_code == 404
     visuals = payload["visuals"]
@@ -96,6 +99,27 @@ def test_publish_demo_pack_skips_incomplete_runs() -> None:
         backend._publish_demo_pack("not valid", Path("x.csv"), "y", matched, spec, {})
 
 
+def test_cached_demo_pack_skips_rebuild(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(backend, "DEMO_PACK_ROOT", tmp_path)
+    pack = tmp_path / "credit"
+    pack.mkdir()
+    for filename in backend.ARTIFACT_NAMES.values():
+        (pack / filename).write_text("cached", encoding="utf-8")
+    spec = type("Spec", (), {"verification_id": "V001"})()
+    report = type(
+        "Report",
+        (),
+        {
+            "ghosts": (object(),),
+            "evidence": (type("Ev", (), {"verification_id": "V001"})(),),
+        },
+    )()
+    urls = backend._publish_demo_pack("credit", Path("x.csv"), "y", report, spec, {})
+    assert urls is not None
+    assert urls["model_report"].endswith("/credit/artifacts/model_report")
+    assert (pack / "model_report.json").read_text(encoding="utf-8") == "cached"
+
+
 def test_frontend_route_serves_demo_shell() -> None:
     response = client.get("/")
 
@@ -119,6 +143,7 @@ def test_frontend_route_serves_demo_shell() -> None:
     assert "Preview" in response.text
     assert 'id="preview-overlay"' in response.text
     assert "Run on Daytona" in response.text
+    assert ">Run<" in response.text
     assert 'id="upload"' in response.text
     assert 'id="prompt"' in response.text
     assert 'id="progress"' in response.text
