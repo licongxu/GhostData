@@ -1,8 +1,11 @@
 """Thin HTTP surface for the hackathon demo."""
 
+import re
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -10,9 +13,9 @@ from fastapi.responses import FileResponse
 from ghostdata.demo import prepare_credit_demo
 from ghostdata.demo.charts import attach_visuals
 from ghostdata.demo.credit import DEFAULT_DATA_PATH, TARGET_COLUMN
-from ghostdata.demo.table import run_table_demo
+from ghostdata.demo.table import build_table_bundle, run_table_demo
 from ghostdata.tabular import load_table
-from ghostdata.demo.artifacts import ARTIFACT_NAMES
+from ghostdata.demo.artifacts import ARTIFACT_NAMES, build_ghost_artifacts
 from ghostdata.demo.discovery import (
     DEFAULT_OUTPUT_ROOT,
     FULL_DATA_PATH,
@@ -32,6 +35,8 @@ from ghostdata.demo.redteam import (
 app = FastAPI(title="GhostData", version="0.1.0")
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend" / "index.html"
 DISCOVERY_OUTPUT_ROOT = DEFAULT_OUTPUT_ROOT
+DEMO_PACK_ROOT = Path(__file__).resolve().parents[2] / "artifacts" / "demo"
+PACK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 APPROVAL_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "live" / "credit_approval.csv"
 GERMAN_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "build" / "german_credit.csv"
 FIXTURES = {
@@ -39,6 +44,57 @@ FIXTURES = {
     "approval": (APPROVAL_DATA_PATH, "class"),
     "german": (GERMAN_DATA_PATH, "class"),
 }
+
+
+def _publish_demo_pack(
+    pack_id: str,
+    data_path: Path,
+    label_column: str,
+    report: object,
+    spec: object,
+    analysis: dict[str, object],
+) -> dict[str, str] | None:
+    ghosts = getattr(report, "ghosts", ()) or ()
+    if not ghosts:
+        return None
+    evidence = next(
+        (
+            item
+            for item in getattr(report, "evidence", ())
+            if item.verification_id == spec.verification_id
+        ),
+        None,
+    )
+    if evidence is None:
+        return None
+    if not PACK_ID_RE.fullmatch(pack_id):
+        raise ValueError("invalid pack id")
+    destination = DEMO_PACK_ROOT / pack_id
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    reference = load_table(data_path, label_column)
+    bundle, _, _ = build_table_bundle(
+        reference,
+        label_column,
+        f"demo-pack-{pack_id}",
+        "Verify an agent-generated preprocessing change.",
+    )
+    build_ghost_artifacts(
+        data_path,
+        label_column,
+        bundle,
+        spec,
+        evidence,
+        {
+            "proposal": analysis,
+            "verification_report": report.to_dict(),
+        },
+        destination,
+    )
+    return {
+        role: f"/api/demo/packs/{pack_id}/artifacts/{role}" for role in ARTIFACT_NAMES
+    }
 
 
 def _public_run(report: dict[str, object]) -> dict[str, object]:
@@ -131,13 +187,21 @@ async def run_demo(
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / f"upload{suffix}"
             path.write_bytes(await file.read())
-            report, spec, analysis = run_table_demo(path, label_column.strip(), backend)
-            payload = attach_visuals(report, load_table(path, label_column.strip()), spec)
+            column = label_column.strip()
+            report, spec, analysis = run_table_demo(path, column, backend)
+            payload = attach_visuals(report, load_table(path, column), spec)
+            pack_id = uuid4().hex[:12]
+            payload["artifacts"] = _publish_demo_pack(
+                pack_id, path, column, report, spec, analysis
+            )
     else:
         data_path, fixture_label = FIXTURES[dataset]
         column = (label_column or fixture_label).strip()
         report, spec, analysis = run_table_demo(data_path, column, backend)
         payload = attach_visuals(report, load_table(data_path, column), spec)
+        payload["artifacts"] = _publish_demo_pack(
+            dataset, data_path, column, report, spec, analysis
+        )
     payload["proposal"] = {
         "origin": spec.origin,
         "experiment_type": spec.experiment_type,
@@ -149,6 +213,22 @@ async def run_demo(
         "winning_verification_id": analysis.get("winning_verification_id"),
     }
     return payload
+
+
+@app.get("/api/demo/packs/{pack_id}/artifacts/{role}")
+def demo_pack_artifact(pack_id: str, role: str) -> FileResponse:
+    if not PACK_ID_RE.fullmatch(pack_id) or role not in ARTIFACT_NAMES:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    path = DEMO_PACK_ROOT / pack_id / ARTIFACT_NAMES[role]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    media_types = {
+        "transform_code": "text/x-python",
+        "degraded_dataset": "text/csv",
+        "model_report": "application/json",
+        "regression_contract": "text/x-python",
+    }
+    return FileResponse(path, media_type=media_types[role], filename=path.name)
 
 
 @app.post("/api/discovery/runs")

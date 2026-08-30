@@ -50,6 +50,19 @@ def test_demo_run_endpoint_executes_real_local_backend() -> None:
     assert payload["proposal"]["experiment_type"] == "entity_alignment"
     assert payload["proposal"]["inspected_columns"]
     assert payload["proposal"]["executed_spec_count"] >= 2
+    assert payload["artifacts"]
+    assert set(payload["artifacts"]) == {
+        "transform_code",
+        "degraded_dataset",
+        "model_report",
+        "regression_contract",
+    }
+    dataset = client.get(payload["artifacts"]["degraded_dataset"])
+    assert dataset.status_code == 200
+    assert dataset.headers["content-type"].startswith("text/csv")
+    assert "transform.py" not in dataset.text[:80]
+    assert client.get("/api/demo/packs/missing/artifacts/model_report").status_code == 404
+    assert client.get("/api/demo/packs/credit/artifacts/unknown").status_code == 404
     visuals = payload["visuals"]
     assert visuals["headline"] == "Same values. Different relationships."
     marginal = next(chart for chart in visuals["charts"] if chart["id"] == "marginal")
@@ -59,6 +72,28 @@ def test_demo_run_endpoint_executes_real_local_backend() -> None:
 
     invalid = client.post("/api/demo/run?backend=unknown")
     assert invalid.status_code == 422
+
+
+def test_publish_demo_pack_skips_incomplete_runs() -> None:
+    spec = type("Spec", (), {"verification_id": "V001"})()
+    empty = type("Report", (), {"ghosts": (), "evidence": ()})()
+    assert backend._publish_demo_pack("credit", Path("x.csv"), "y", empty, spec, {}) is None
+    missing = type(
+        "Report",
+        (),
+        {"ghosts": (object(),), "evidence": ()},
+    )()
+    assert backend._publish_demo_pack("credit", Path("x.csv"), "y", missing, spec, {}) is None
+    matched = type(
+        "Report",
+        (),
+        {
+            "ghosts": (object(),),
+            "evidence": (type("Ev", (), {"verification_id": "V001"})(),),
+        },
+    )()
+    with pytest.raises(ValueError, match="invalid pack id"):
+        backend._publish_demo_pack("not valid", Path("x.csv"), "y", matched, spec, {})
 
 
 def test_frontend_route_serves_demo_shell() -> None:
@@ -75,6 +110,11 @@ def test_frontend_route_serves_demo_shell() -> None:
     assert "Analysis agent" in response.text
     assert "What happens in a run" in response.text
     assert "Measure" in response.text
+    assert "Ghost dataset" in response.text
+    assert "ghost_dataset.csv" in response.text
+    assert "Model report" in response.text
+    assert "Regression contract" in response.text
+    assert "source is not shown" in response.text
     assert "Run on Daytona" in response.text
     assert 'id="upload"' in response.text
     assert 'id="prompt"' in response.text

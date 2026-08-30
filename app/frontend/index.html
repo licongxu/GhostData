@@ -248,7 +248,34 @@
       .swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
       .swatch.ref { background: rgba(243, 245, 239, 0.45); }
       .swatch.ghost { background: var(--accent); }
-      .downloads a { color: var(--accent-2); margin-right: 14px; }
+      .pack {
+        display: grid; gap: 12px; margin-top: 18px;
+        grid-template-columns: 1fr;
+      }
+      @media (min-width: 720px) { .pack { grid-template-columns: 1fr 1fr; } }
+      .pack-card {
+        border: 1px solid var(--line); border-radius: 16px; padding: 16px;
+        background: var(--panel); display: flex; flex-direction: column; gap: 8px;
+        min-height: 148px;
+      }
+      .pack-card .kind {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+        color: var(--accent-2);
+      }
+      .pack-card b { font-size: 18px; letter-spacing: -0.04em; }
+      .pack-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+      .pack-card .file {
+        margin-top: auto;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px; color: var(--muted);
+      }
+      .pack-card a.dl {
+        display: inline-block; margin-top: 8px; color: #08110a; text-decoration: none;
+        background: var(--accent); font: 650 13px/1 "Instrument Sans", sans-serif;
+        padding: 8px 12px; border-radius: 999px;
+      }
+      .pack-card .wait { margin-top: 8px; color: var(--muted); font-size: 12px; }
       .overlay {
         display: none; position: fixed; inset: 0; z-index: 20;
         background: rgba(4, 6, 5, 0.72); backdrop-filter: blur(10px);
@@ -348,7 +375,8 @@
         </div>
         <p class="story" id="what"></p>
         <div class="charts" id="charts"></div>
-        <p class="downloads" id="downloads"></p>
+        <p class="kicker" id="pack-kicker" style="display:none;margin-top:22px">Ghost pack — four files, no source on screen</p>
+        <div class="pack" id="pack"></div>
         <details class="raw">
           <summary>Raw run payload</summary>
           <pre id="raw-json"></pre>
@@ -453,6 +481,80 @@
         return `<article class="chart"><h3>${chart.title || chart.id}</h3><p>${chart.caption || ""}</p><div class="bars">${cols.join("")}</div><p class="legend"><span class="swatch ref"></span> before <span class="swatch ghost"></span> ghost</p></article>`;
       }
 
+      const PACK = [
+        {
+          role: "degraded_dataset",
+          file: "ghost_dataset.csv",
+          kind: "Dataset",
+          title: "Ghost dataset",
+          blurb: "Simulated table Daytona materialized. Same schema, same values, wrong relationships.",
+        },
+        {
+          role: "model_report",
+          file: "model_report.json",
+          kind: "Report",
+          title: "Model report",
+          blurb: "Measured checks and frozen-model score. Baseline vs Ghost, written after the sandbox run.",
+        },
+        {
+          role: "transform_code",
+          file: "transform.py",
+          kind: "Code",
+          title: "Transform",
+          blurb: "The failure applied to the table. Download the file — source is not shown here.",
+        },
+        {
+          role: "regression_contract",
+          file: "regression_contract.py",
+          kind: "Code",
+          title: "Regression contract",
+          blurb: "Runnable check: original table passes, Ghost fails. Keep it as a regression test.",
+        },
+      ];
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function renderPack(report, found) {
+        const artifacts = report.artifacts || {};
+        const winner = report.winner || {};
+        const proposal = report.proposal || {};
+        const feature = winner.target_feature || proposal.target_feature;
+        const hypothesis = winner.hypothesis || proposal.hypothesis || "";
+        const facts = {
+          degraded_dataset: feature ? `Touched column: ${feature}.` : "Same values, reassigned rows.",
+          model_report: (winner.baseline != null && winner.candidate != null)
+            ? `AUC ${fmt(winner.baseline)} → ${fmt(winner.candidate)}.`
+            : "Checks + frozen-model metric from the verifier.",
+          transform_code: hypothesis ? hypothesis : "The transform Daytona applied. File only — no source dump.",
+          regression_contract: "Pass the original CSV. Fail the Ghost CSV.",
+        };
+        $("#pack-kicker").style.display = found ? "block" : "none";
+        if (!found) {
+          $("#pack").innerHTML = "";
+          return;
+        }
+        $("#pack").innerHTML = PACK.map((item) => {
+          const href = artifacts[item.role];
+          const action = href
+            ? `<a class="dl" href="${escapeHtml(href)}" download="${escapeHtml(item.file)}">Download ${escapeHtml(item.file)}</a>`
+            : `<span class="wait">Download after this run publishes the pack.</span>`;
+          return `<article class="pack-card">
+            <span class="kind">${item.kind}</span>
+            <b>${item.title}</b>
+            <p>${escapeHtml(item.blurb)}</p>
+            <p>${escapeHtml(facts[item.role])}</p>
+            <span class="file">${escapeHtml(item.file)}</span>
+            ${action}
+          </article>`;
+        }).join("");
+      }
+
       function renderVisuals(visuals) {
         const charts = (visuals && visuals.charts) || [];
         $("#charts").innerHTML = charts.slice(0, 2).map(barChart).join("");
@@ -494,8 +596,7 @@
         $("#what").textContent = (winner && winner.hypothesis)
           || proposal.hypothesis
           || "No invariant-passing world produced a measured metric drop.";
-        const artifacts = report.artifacts || {};
-        $("#downloads").innerHTML = Object.entries(artifacts).map(([role, href]) => `<a href="${href}">${role}</a>`).join("");
+        renderPack(report, found);
         renderVisuals(visuals);
         $("#raw-json").textContent = JSON.stringify(source, null, 2);
         showWorkspace();
@@ -528,7 +629,8 @@
         $("#progress").textContent = "Creating Daytona analyst sandbox…";
         $("#headline").textContent = "";
         $("#charts").innerHTML = "";
-        $("#downloads").innerHTML = "";
+        $("#pack").innerHTML = "";
+        $("#pack-kicker").style.display = "none";
         showWorkspace();
         try {
           const prompt = $("#prompt").value.trim();
@@ -554,7 +656,8 @@
         $("#progress").textContent = "Replaying a measured example on this table…";
         $("#headline").textContent = "";
         $("#charts").innerHTML = "";
-        $("#downloads").innerHTML = "";
+        $("#pack").innerHTML = "";
+        $("#pack-kicker").style.display = "none";
         showWorkspace();
         try {
           const response = await fetch(`/api/demo/run?backend=local&dataset=${dataset}`, { method: "POST" });
