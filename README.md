@@ -6,21 +6,37 @@ GhostData searches for a plausible preprocessing failure that **passes existing 
 
 Not a drift dashboard. Not Great Expectations. Not an LLM inventing scary stories.
 
+## Architecture
+
+Codex proposes. Daytona proves. The host never invents an AUC.
+
 ```mermaid
-flowchart LR
-  A["CSV + prompt"] --> B["Analyst<br/>proposes worlds"]
-  B --> C["Daytona sandboxes<br/>checks + frozen model"]
-  C --> D["Host ranks<br/>measured evidence"]
-  D --> E["Ghost pack"]
+flowchart TB
+  U["Labeled CSV + prompt"] --> P["Analyst proposes worlds<br/>Codex, or pandas if no login"]
+
+  P --> S1["Daytona sandbox"]
+  P --> S2["Daytona sandbox"]
+  P --> S3["Daytona sandbox"]
+
+  S1 --> T["Apply transform"]
+  S2 --> T
+  S3 --> T
+
+  T --> K{"Existing checks<br/>schema · marginals · missingness"}
+  K -->|fail| X["Reject"]
+  K -->|pass| M{"Frozen model"}
+
+  M -->|metric drops| G["Ghost"]
+  M -->|no drop| H["Harmless"]
+
+  G --> Pack["Ghost pack<br/>transform.py · ghost_dataset.csv<br/>model_report.json · regression_contract.py"]
 ```
 
-A world becomes a Ghost only if checks stay green **and** the frozen-model metric drops. Codex proposes (pandas fallback if not logged in). Daytona proves. The host never invents an AUC.
+Each world runs in its own ephemeral Daytona sandbox with the real checks and the frozen model, then the sandbox is deleted. A Ghost is only declared from **measured** evidence: checks stay green **and** the model metric drops.
 
-Ghost pack: `transform.py` · `ghost_dataset.csv` · `model_report.json` · `regression_contract.py`
+## Quick start
 
-## Judge demo
-
-Python 3.11+. Daytona key from [app.daytona.io](https://app.daytona.io) (prize eligibility requires Daytona). Codex login is optional.
+Python 3.11+. Daytona key from [app.daytona.io](https://app.daytona.io) (this demo uses Daytona sandboxes). Codex login is optional.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
