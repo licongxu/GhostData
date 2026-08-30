@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 420" role="img" aria-label="GhostData architecture">
+  <rect width="1120" height="420" rx="22" fill="#07080a"/>
+  <text x="40" y="42" fill="#e8ff67" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" letter-spacing="2.4">ARCHITECTURE</text>
+  <text x="40" y="68" fill="#f3f5ef" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="600">Agents propose. Daytona verifies.</text>
+
+  <!-- 1 You -->
+  <rect x="40" y="100" width="220" height="260" rx="18" fill="#0f1311" stroke="rgba(232,255,103,0.14)"/>
+  <text x="58" y="128" fill="#e8ff67" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="1.6">1 · YOU</text>
+  <text x="58" y="162" fill="#f3f5ef" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">CSV + prompt</text>
+  <text x="58" y="192" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Labeled table.</text>
+  <text x="58" y="212" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">What the agent was</text>
+  <text x="58" y="232" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">predicting.</text>
+
+  <polygon points="274,230 294,220 294,240" fill="rgba(232,255,103,0.45)"/>
+
+  <!-- 2 Analysis agent -->
+  <rect x="308" y="100" width="220" height="260" rx="18" fill="#0f1311" stroke="rgba(200,255,61,0.32)"/>
+  <text x="326" y="128" fill="#e8ff67" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="1.6">2 · ANALYSIS AGENT ×1</text>
+  <text x="326" y="162" fill="#f3f5ef" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">Propose only</text>
+  <text x="326" y="192" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Inspect the table.</text>
+  <text x="326" y="212" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Write failure hypotheses</text>
+  <text x="326" y="232" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">and transforms.</text>
+  <text x="326" y="268" fill="#c8ff3d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">Codex · pandas fallback</text>
+
+  <polygon points="542,230 562,220 562,240" fill="rgba(232,255,103,0.45)"/>
+
+  <!-- 3 Daytona -->
+  <rect x="576" y="100" width="268" height="260" rx="18" fill="#0d120e" stroke="#c8ff3d" stroke-width="1.4"/>
+  <text x="594" y="128" fill="#c8ff3d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="1.6">3 · DAYTONA ×N</text>
+  <text x="594" y="158" fill="#f3f5ef" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">Simulate each world</text>
+  <text x="594" y="186" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">One ephemeral sandbox</text>
+  <text x="594" y="206" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">per hypothesis.</text>
+
+  <rect x="594" y="226" width="232" height="56" rx="10" fill="rgba(200,255,61,0.07)" stroke="rgba(200,255,61,0.22)"/>
+  <text x="610" y="248" fill="#f3f5ef" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Simulated dataset</text>
+  <text x="610" y="268" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">same schema · same values · wrong relationships</text>
+
+  <text x="594" y="308" fill="#c8ff3d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">then: checks → frozen model</text>
+  <text x="594" y="328" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">sandbox deleted after measure</text>
+
+  <polygon points="858,230 878,220 878,240" fill="rgba(232,255,103,0.45)"/>
+
+  <!-- 4 Ghost -->
+  <rect x="892" y="100" width="188" height="260" rx="18" fill="#0f1311" stroke="rgba(255,107,90,0.4)"/>
+  <text x="910" y="128" fill="#ff6b5a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="1.6">4 · GHOST</text>
+  <text x="910" y="162" fill="#f3f5ef" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="600">Keep evidence</text>
+  <text x="910" y="192" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Host ranks measured</text>
+  <text x="910" y="212" fill="#8d9488" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">results only.</text>
+  <text x="910" y="248" fill="#ff6b5a" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">checks pass</text>
+  <text x="910" y="268" fill="#ff6b5a" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">model drops</text>
+  <text x="910" y="308" fill="#8d9488" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">transform.py</text>
+  <text x="910" y="324" fill="#8d9488" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">ghost_dataset.csv</text>
+  <text x="910" y="340" fill="#8d9488" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">model_report.json</text>
+</svg>

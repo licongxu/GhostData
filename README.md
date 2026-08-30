@@ -8,33 +8,9 @@ A **Ghost** is a measured counterexample: existing checks still pass and the fro
 
 ## Architecture
 
-```text
-CSV + prompt  (what was the agent predicting?)
-    → Analysis agent  (×1, isolated): inspect + propose hypotheses only
-    → Verifiers       (Daytona ×N):   transform → checks → frozen model
-    → Host evaluator: rank measured evidence → Ghost pack, or nothing
-```
+![GhostData architecture](docs/architecture.svg)
 
-```mermaid
-flowchart LR
-  subgraph you [1 · You]
-    A["Labeled CSV<br/>what the agent was predicting"]
-  end
-  subgraph agent [2 · Analysis agent]
-    B["Proposes hypotheses<br/>inspect + write transforms"]
-  end
-  subgraph daytona [3 · Daytona ×N]
-    C["Each world measured<br/>transform · checks · frozen model"]
-  end
-  subgraph host [4 · GhostData]
-    D["Rank evidence<br/>keep the Ghost"]
-  end
-  A --> B --> C --> D
-```
-
-Analysts propose. Verifier sandboxes measure. The host evaluator ranks. Codex (or a pandas fallback) writes hypotheses; Daytona scores them. Each hypothesis gets its own ephemeral verifier. Leftover sandboxes should be `0`.
-
-Ghost pack: `transform.py` · `ghost_dataset.csv` · `model_report.json` · `regression_contract.py`
+The analysis agent writes hypotheses. **Daytona simulates each world** in its own ephemeral sandbox: apply the transform, emit a simulated dataset (same schema, same values, wrong relationships), run existing checks, score the frozen model, then delete the sandbox. The host ranks that measured evidence. Leftover sandboxes should be `0`.
 
 ## Quick start
 
