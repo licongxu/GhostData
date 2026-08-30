@@ -83,9 +83,36 @@ def entity_alignment_transform(
     return TransformResult(transformed, float(changed / len(dataframe)))
 
 
+def generated_transform(
+    dataframe: pd.DataFrame, spec: VerificationSpec
+) -> TransformResult:
+    source = spec.parameters.get("transform_source")
+    if not isinstance(source, str) or "def transform" not in source:
+        raise ValueError("generated transform is missing a transform() function")
+    namespace: dict[str, object] = {"pd": pd, "np": np}
+    exec(compile(source, "transform.py", "exec"), namespace, namespace)
+    fn = namespace.get("transform")
+    if not callable(fn):
+        raise ValueError("transform.py must define transform(dataframe)")
+    transformed = fn(dataframe.copy(deep=True))
+    if not isinstance(transformed, pd.DataFrame):
+        raise ValueError("transform() must return a DataFrame")
+    if list(transformed.columns) != list(dataframe.columns):
+        changed = float(len(dataframe))
+        return TransformResult(transformed, 1.0)
+    changed_rows = 0
+    for column in dataframe.columns:
+        before = dataframe[column]
+        after = transformed[column]
+        unchanged = before.eq(after) | (before.isna() & after.isna())
+        changed_rows = max(changed_rows, int((~unchanged).sum()))
+    return TransformResult(transformed, float(changed_rows / max(len(dataframe), 1)))
+
+
 def default_compiler() -> ExperimentCompiler:
     compiler = ExperimentCompiler()
     compiler.register("entity_alignment", entity_alignment_transform)
+    compiler.register("generated_transform", generated_transform)
     return compiler
 
 

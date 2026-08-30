@@ -1,9 +1,10 @@
 """Thin HTTP surface for the hackathon demo."""
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from ghostdata.demo import prepare_credit_demo
@@ -13,20 +14,31 @@ from ghostdata.demo.table import run_table_demo
 from ghostdata.tabular import load_table
 from ghostdata.demo.artifacts import ARTIFACT_NAMES
 from ghostdata.demo.discovery import (
-    DEFAULT_AGENT_PROFILES,
     DEFAULT_OUTPUT_ROOT,
     FULL_DATA_PATH,
     discovery_artifact_path,
     list_discovery_runs,
     load_discovery_run,
-    run_credit_discovery,
+    run_table_discovery,
+)
+from ghostdata.demo.redteam import (
+    get_run,
+    list_runs,
+    run_artifact_path,
+    start_run,
 )
 
 
 app = FastAPI(title="GhostData", version="0.1.0")
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend" / "index.html"
 DISCOVERY_OUTPUT_ROOT = DEFAULT_OUTPUT_ROOT
-DISCOVERY_DATA_PATHS = {"full": FULL_DATA_PATH, "debug": DEFAULT_DATA_PATH}
+APPROVAL_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "live" / "credit_approval.csv"
+GERMAN_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "build" / "german_credit.csv"
+FIXTURES = {
+    "credit": (DEFAULT_DATA_PATH, TARGET_COLUMN),
+    "approval": (APPROVAL_DATA_PATH, "class"),
+    "german": (GERMAN_DATA_PATH, "class"),
+}
 
 
 def _public_run(report: dict[str, object]) -> dict[str, object]:
@@ -55,21 +67,86 @@ def verifications() -> list[dict[str, object]]:
     return [spec.to_dict() for spec in prepare_credit_demo().specs]
 
 
-@app.post("/api/demo/run")
-def run_demo(
-    backend: Literal["local", "daytona"] = "local",
+@app.post("/api/runs")
+async def create_redteam_run(
+    prompt: str = Form(...),
+    dataset: Literal["credit", "approval", "german"] = Form("credit"),
+    file: UploadFile | None = File(default=None),
 ) -> dict[str, object]:
-    report, spec, analysis = run_table_demo(
-        DEFAULT_DATA_PATH, TARGET_COLUMN, backend
-    )
-    payload = attach_visuals(
-        report, load_table(DEFAULT_DATA_PATH, TARGET_COLUMN), spec
-    )
+    text = prompt.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if file is not None and file.filename:
+        csv_bytes = await file.read()
+        filename = file.filename
+        if not csv_bytes.strip():
+            raise HTTPException(status_code=400, detail="uploaded CSV is empty")
+    else:
+        path, _label = FIXTURES[dataset]
+        csv_bytes = path.read_bytes()
+        filename = path.name
+    run_id = start_run(csv_bytes, text, filename, backend="daytona")
+    return {"run_id": run_id, "status": "running"}
+
+
+@app.get("/api/runs")
+def redteam_runs() -> list[dict[str, object]]:
+    return list_runs()
+
+
+@app.get("/api/runs/{run_id}")
+def redteam_run(run_id: str) -> dict[str, object]:
+    try:
+        return get_run(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="run not found") from exc
+
+
+@app.get("/api/runs/{run_id}/artifacts/{role}")
+def redteam_artifact(run_id: str, role: str) -> FileResponse:
+    try:
+        path = run_artifact_path(run_id, role)
+    except (FileNotFoundError, KeyError) as exc:
+        raise HTTPException(status_code=404, detail="artifact not found") from exc
+    media_types = {
+        "transform_code": "text/x-python",
+        "degraded_dataset": "text/csv",
+        "model_report": "application/json",
+        "regression_contract": "text/x-python",
+    }
+    return FileResponse(path, media_type=media_types[role], filename=path.name)
+
+
+@app.post("/api/demo/run")
+async def run_demo(
+    backend: Literal["local", "daytona"] = "local",
+    dataset: Literal["credit", "approval", "german"] = "credit",
+    label_column: str | None = None,
+    file: UploadFile | None = File(default=None),
+) -> dict[str, object]:
+    if file is not None and file.filename:
+        if not label_column or not label_column.strip():
+            raise HTTPException(status_code=400, detail="label_column is required for uploads")
+        suffix = Path(file.filename).suffix or ".csv"
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / f"upload{suffix}"
+            path.write_bytes(await file.read())
+            report, spec, analysis = run_table_demo(path, label_column.strip(), backend)
+            payload = attach_visuals(report, load_table(path, label_column.strip()), spec)
+    else:
+        data_path, fixture_label = FIXTURES[dataset]
+        column = (label_column or fixture_label).strip()
+        report, spec, analysis = run_table_demo(data_path, column, backend)
+        payload = attach_visuals(report, load_table(data_path, column), spec)
     payload["proposal"] = {
         "origin": spec.origin,
         "experiment_type": spec.experiment_type,
         "hypothesis": spec.hypothesis,
+        "target_feature": spec.parameters.get("target_feature"),
         "inspected_columns": list(analysis.get("inspected_columns") or []),
+        "hypotheses": list(analysis.get("hypotheses") or []),
+        "executed_spec_count": analysis.get("executed_spec_count"),
+        "winning_verification_id": analysis.get("winning_verification_id"),
     }
     return payload
 
@@ -77,17 +154,22 @@ def run_demo(
 @app.post("/api/discovery/runs")
 def discover(
     backend: Literal["local", "daytona"] = "local",
-    dataset: Literal["full", "debug"] = "full",
-    agents: Annotated[int, Query(ge=1, le=len(DEFAULT_AGENT_PROFILES))] = len(
-        DEFAULT_AGENT_PROFILES
-    ),
+    dataset: Literal["full", "debug", "approval"] = "full",
+    agents: Annotated[int, Query(ge=1, le=6)] = 4,
 ) -> dict[str, object]:
+    paths = {
+        "full": (FULL_DATA_PATH, TARGET_COLUMN),
+        "debug": (DEFAULT_DATA_PATH, TARGET_COLUMN),
+        "approval": (APPROVAL_DATA_PATH, "class"),
+    }
+    data_path, label_column = paths[dataset]
     try:
-        report = run_credit_discovery(
+        report = run_table_discovery(
+            data_path=data_path,
+            label_column=label_column,
             backend=backend,
-            data_path=DISCOVERY_DATA_PATHS[dataset],
             output_root=DISCOVERY_OUTPUT_ROOT,
-            profiles=DEFAULT_AGENT_PROFILES[:agents],
+            max_specs=agents,
         )
     except Exception as exc:
         raise HTTPException(

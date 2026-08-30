@@ -1,4 +1,4 @@
-"""Multi-sandbox credit discovery and promotion for the hackathon backend."""
+"""Multi-sandbox Ghost discovery and promotion. Credit is one fixture."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
-from math import isfinite
 from pathlib import Path
 from typing import Callable, Literal, Mapping, Sequence
 
@@ -18,31 +17,36 @@ from dotenv import load_dotenv
 from ghostdata.bundle import AgentOutput, AnalysisBundle, BundleClaimExtractor, Claim
 from ghostdata.demo.artifacts import (
     ARTIFACT_NAMES,
-    build_credit_artifacts,
-    validate_credit_artifacts,
+    build_ghost_artifacts,
+    validate_ghost_artifacts,
 )
-from ghostdata.demo.credit import (
-    PROJECT_ROOT,
-    TARGET_FEATURE,
-    credit_invariants,
-    fitted_credit_model_score,
-    load_credit_data,
+from ghostdata.demo.credit import PROJECT_ROOT, TARGET_COLUMN, TARGET_FEATURE
+from ghostdata.demo.table import (
+    FrozenSpecsPlanner,
+    MAX_LIVE_WORLDS,
+    build_executor_job,
+    build_local_runner,
+    build_promote_job,
+    build_table_bundle,
+    package_sandbox_files,
+    select_winner,
 )
 from ghostdata.evaluators import EvaluatorRegistry, ModelMetricPreservationEvaluator
 from ghostdata.execution.daytona import (
     DaytonaJob,
+    DaytonaProposalRunner,
     DaytonaSettings,
     DaytonaVerificationRunner,
 )
-from ghostdata.execution.local import LocalVerificationRunner, default_compiler
+from ghostdata.tabular import DEFAULT_MAX_SPECS, load_table
 from ghostdata.verification import ExecutionEvidence, VerificationReport, VerificationSpec
 from ghostdata.verification.search import VerificationOrchestrator
 
 
 FULL_DATA_PATH = PROJECT_ROOT / "data" / "build" / "givemesomecredit.csv"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts" / "discovery"
-DISCOVERY_WORKER = PROJECT_ROOT / "demo" / "credit_pipeline" / "discovery_worker.py"
-ARTIFACT_WORKER = PROJECT_ROOT / "demo" / "credit_pipeline" / "artifact_worker.py"
+DISCOVERY_WORKER = PROJECT_ROOT / "demo" / "pipeline" / "worker.py"
+ARTIFACT_WORKER = PROJECT_ROOT / "demo" / "pipeline" / "promote.py"
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,8 @@ def prepare_credit_discovery(
     discovery_id: str,
     backend: str,
 ) -> PreparedCreditDiscovery:
+    from ghostdata.demo.credit import fitted_credit_model_score, load_credit_data
+
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", discovery_id):
         raise ValueError("discovery_id contains unsafe characters")
     path = Path(data_path).resolve()
@@ -176,15 +182,7 @@ def prepare_credit_discovery(
 
 
 def _job_files(data_path: Path, worker_path: Path) -> dict[str, bytes]:
-    files = {
-        "dataset.csv": data_path.read_bytes(),
-        "worker.py": worker_path.read_bytes(),
-    }
-    package_root = PROJECT_ROOT / "src" / "ghostdata"
-    for source_path in package_root.rglob("*.py"):
-        remote = (Path("src") / source_path.relative_to(PROJECT_ROOT / "src")).as_posix()
-        files[remote] = source_path.read_bytes()
-    return files
+    return package_sandbox_files(data_path, {"worker.py": worker_path.read_bytes()})
 
 
 def build_discovery_job(
@@ -208,8 +206,11 @@ def _agent_results(
     }
     return [
         {
-            "agent_id": spec.parameters["agent_id"],
+            "agent_id": spec.parameters.get("agent_id") or spec.verification_id,
             "verification_id": spec.verification_id,
+            "target_feature": spec.parameters.get("target_feature"),
+            "mismatch_fraction": spec.parameters.get("mismatch_fraction"),
+            "hypothesis": spec.hypothesis,
             "outcome": verdicts[spec.verification_id].outcome,
             "reason": verdicts[spec.verification_id].reason,
             "measurements": dict(verdicts[spec.verification_id].measurements),
@@ -221,31 +222,41 @@ def _agent_results(
 def _winner(
     report: VerificationReport, specs: Sequence[VerificationSpec]
 ) -> tuple[VerificationSpec, ExecutionEvidence]:
-    specs_by_id = {spec.verification_id: spec for spec in specs}
-    evidence_by_id = {item.verification_id: item for item in report.evidence}
-    eligible = []
-    for ghost in report.ghosts:
-        degradation = ghost.measurements.get("degradation")
-        if isinstance(degradation, (int, float)) and isfinite(degradation):
-            eligible.append((float(degradation), ghost.verification_id))
-    if not eligible:
+    selected = select_winner(report, specs)
+    if selected is None:
         raise RuntimeError("discovery completed without a promotable Ghost")
-    _, verification_id = max(eligible, key=lambda item: item[0])
-    return specs_by_id[verification_id], evidence_by_id[verification_id]
+    return selected
+
+
+def _promote_local(
+    data_path: Path,
+    label_column: str,
+    bundle: AnalysisBundle,
+    spec: VerificationSpec,
+    evidence: ExecutionEvidence,
+    discovery: Mapping[str, object],
+    destination: Path,
+) -> None:
+    build_ghost_artifacts(
+        data_path, label_column, bundle, spec, evidence, discovery, destination
+    )
 
 
 def _promote_daytona(
-    prepared: PreparedCreditDiscovery,
+    data_path: Path,
+    label_column: str,
+    bundle: AnalysisBundle,
     spec: VerificationSpec,
     discovery: Mapping[str, object],
     destination: Path,
     settings: DaytonaSettings | None,
 ) -> None:
     def sink(
-        bundle: AnalysisBundle,
+        _bundle: AnalysisBundle,
         promoted_spec: VerificationSpec,
         artifacts: Mapping[str, bytes],
     ) -> Mapping[str, str]:
+        del promoted_spec
         if set(artifacts) != set(ARTIFACT_NAMES):
             raise ValueError("promotion sandbox returned an invalid artifact set")
         destination.mkdir(parents=True, exist_ok=True)
@@ -253,70 +264,127 @@ def _promote_daytona(
             (destination / ARTIFACT_NAMES[role]).write_bytes(contents)
         return dict(ARTIFACT_NAMES)
 
-    files = _job_files(prepared.data_path, ARTIFACT_WORKER)
-    files["discovery_report.json"] = json.dumps(
-        discovery, sort_keys=True, allow_nan=False
-    ).encode()
     runner = DaytonaVerificationRunner(
-        lambda bundle, promoted_spec: DaytonaJob(
-            command="PYTHONPATH=src python worker.py",
-            files=files,
-            evidence_path="promotion_evidence.json",
-            download_paths={
-                role: f"outputs/{filename}"
-                for role, filename in ARTIFACT_NAMES.items()
-            },
+        lambda _bundle, _spec: build_promote_job(
+            data_path, label_column, dict(discovery), settings
         ),
         settings=settings,
         artifact_sink=sink,
     )
-    runner.run(prepared.bundle, spec)
-    validate_credit_artifacts(prepared.data_path, destination)
+    runner.run(bundle, spec)
+    validate_ghost_artifacts(data_path, destination, label_column)
 
 
-def run_credit_discovery(
+def run_table_discovery(
+    data_path: Path | str,
+    label_column: str,
     backend: Literal["local", "daytona"] = "local",
-    data_path: Path | str = FULL_DATA_PATH,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
-    profiles: Sequence[AgentProfile] = DEFAULT_AGENT_PROFILES,
     discovery_id: str | None = None,
+    max_specs: int = DEFAULT_MAX_SPECS,
     daytona_settings: DaytonaSettings | None = None,
+    planner: object | None = None,
 ) -> dict[str, object]:
     discovery_id = discovery_id or uuid.uuid4().hex[:12]
-    prepared = prepare_credit_discovery(
-        data_path, profiles, discovery_id, backend
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", discovery_id):
+        raise ValueError("discovery_id contains unsafe characters")
+    path = Path(data_path).resolve()
+    reference = load_table(path, label_column)
+    bundle, table_planner, _baseline = build_table_bundle(
+        reference,
+        label_column,
+        f"discovery-{discovery_id}",
+        "Find executable failures in an agent-generated data pipeline.",
+        max_specs=max_specs,
     )
+    active_planner = planner or table_planner
     if backend == "local":
-        runner = LocalVerificationRunner(
-            prepared.reference,
-            default_compiler(),
-            credit_invariants,
-            prepared.scorer,
-            metric="roc_auc",
-        )
+        specs = list(active_planner.propose(bundle, bundle.claims))
+        runner = build_local_runner(reference, label_column)
+        analysis = dict(getattr(active_planner, "last_analysis", None) or {})
     elif backend == "daytona":
+        from ghostdata.execution.daytona import uses_baked_package
+        from ghostdata.tabular import dump_frozen_model, fit_frozen_model
+
         load_dotenv(PROJECT_ROOT / ".env")
-        runner = DaytonaVerificationRunner(
-            lambda bundle, spec: build_discovery_job(prepared, bundle, spec),
-            settings=daytona_settings,
+        settings = daytona_settings or DaytonaSettings()
+        proposal_cls = DaytonaProposalRunner
+        runner_cls = DaytonaVerificationRunner
+        baked = uses_baked_package(settings)
+        volume = bool(settings.volume_name)
+        proposer_files = package_sandbox_files(
+            path,
+            {
+                "proposer.py": (
+                    PROJECT_ROOT / "demo" / "pipeline" / "proposer.py"
+                ).read_bytes(),
+                "task.json": json.dumps(
+                    {
+                        "label_column": label_column,
+                        "dataset": "/data/dataset.csv" if volume else "dataset.csv",
+                        "claim_id": "C001",
+                        "max_specs": max_specs,
+                    }
+                ).encode(),
+            },
+            include_package=not baked,
+            include_dataset=not volume,
+        )
+        volume_files = None
+        if volume:
+            volume_files = {
+                "dataset.csv": path.read_bytes(),
+                "model.joblib": dump_frozen_model(
+                    fit_frozen_model(reference, label_column)
+                ),
+            }
+        specs, analysis = proposal_cls(settings).propose(
+            bundle,
+            proposer_files,
+            label_column,
+            "C001",
+            volume_files=volume_files,
+        )
+        active_planner = FrozenSpecsPlanner(tuple(specs), analysis)
+        runner = runner_cls(
+            lambda _bundle, _spec: build_executor_job(path, label_column, settings),
+            settings=settings,
         )
     else:
         raise ValueError(f"unsupported discovery backend: {backend}")
 
-    specs = prepared.specs
+    annotated: list[VerificationSpec] = []
+    for spec in specs:
+        parameters = dict(spec.parameters)
+        parameters["discovery_id"] = discovery_id
+        parameters["execution_backend"] = backend
+        parameters.setdefault("agent_id", spec.verification_id)
+        annotated.append(
+            VerificationSpec(
+                verification_id=spec.verification_id,
+                claim_id=spec.claim_id,
+                experiment_type=spec.experiment_type,
+                hypothesis=spec.hypothesis,
+                parameters=parameters,
+                expected_invariants=spec.expected_invariants,
+                origin=spec.origin,
+            )
+        )
+    active_planner = FrozenSpecsPlanner(tuple(annotated), dict(analysis))
+    workers = min(max(len(annotated), 1), MAX_LIVE_WORLDS)
     orchestrator = VerificationOrchestrator(
         runner,
         EvaluatorRegistry((ModelMetricPreservationEvaluator(),)),
-        max_workers=len(specs),
+        max_workers=workers,
     )
-    report = orchestrator.verify(
-        prepared.bundle, BundleClaimExtractor(), prepared.planner
-    )
-    winning_spec, winning_evidence = _winner(report, specs)
+    report = orchestrator.verify(bundle, BundleClaimExtractor(), active_planner)
+    winning_spec, winning_evidence = _winner(report, annotated)
     discovery = {
         "discovery_id": discovery_id,
         "backend": backend,
-        "agents": _agent_results(report, specs),
+        "label_column": label_column,
+        "agents": _agent_results(report, annotated),
+        "proposal": dict(analysis),
         "verification_report": report.to_dict(),
     }
 
@@ -328,9 +396,10 @@ def run_credit_discovery(
     temporary = Path(tempfile.mkdtemp(prefix=f".{discovery_id}-", dir=root))
     try:
         if backend == "local":
-            build_credit_artifacts(
-                prepared.data_path,
-                prepared.bundle,
+            _promote_local(
+                path,
+                label_column,
+                bundle,
                 winning_spec,
                 winning_evidence,
                 discovery,
@@ -338,13 +407,41 @@ def run_credit_discovery(
             )
         else:
             _promote_daytona(
-                prepared, winning_spec, discovery, temporary, daytona_settings
+                path,
+                label_column,
+                bundle,
+                winning_spec,
+                discovery,
+                temporary,
+                daytona_settings,
             )
         temporary.rename(run_dir)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
-    return validate_credit_artifacts(prepared.data_path, run_dir)
+    return validate_ghost_artifacts(path, run_dir, label_column)
+
+
+def run_credit_discovery(
+    backend: Literal["local", "daytona"] = "local",
+    data_path: Path | str = FULL_DATA_PATH,
+    output_root: Path | str = DEFAULT_OUTPUT_ROOT,
+    profiles: Sequence[AgentProfile] = DEFAULT_AGENT_PROFILES,
+    discovery_id: str | None = None,
+    daytona_settings: DaytonaSettings | None = None,
+    label_column: str = TARGET_COLUMN,
+    max_specs: int | None = None,
+) -> dict[str, object]:
+    del profiles
+    return run_table_discovery(
+        data_path,
+        label_column,
+        backend=backend,
+        output_root=output_root,
+        discovery_id=discovery_id,
+        max_specs=max_specs or DEFAULT_MAX_SPECS,
+        daytona_settings=daytona_settings,
+    )
 
 
 def load_discovery_run(
@@ -383,4 +480,3 @@ def discovery_artifact_path(
         raise KeyError(role)
     load_discovery_run(discovery_id, output_root)
     return Path(output_root).resolve() / discovery_id / ARTIFACT_NAMES[role]
-

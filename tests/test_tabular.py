@@ -4,12 +4,20 @@ import pandas as pd
 import pytest
 
 from ghostdata.tabular import (
+    dump_frozen_model,
     encode_label,
     feature_invariants,
     feature_score,
+    fit_frozen_model,
+    frozen_model_score,
+    infer_feature_columns,
+    load_frozen_model,
     load_table,
     profile_table,
+    propose_from_table,
     spec_from_profile,
+    specs_from_profile,
+    table_invariants,
 )
 
 
@@ -87,6 +95,21 @@ def test_encode_label_factorizes_non_binary_numeric_values() -> None:
 def test_spec_from_profile_requires_a_ranked_feature() -> None:
     with pytest.raises(ValueError, match="no numeric feature"):
         spec_from_profile({"ranked_features": []}, "C001")
+    with pytest.raises(ValueError, match="no numeric feature"):
+        specs_from_profile({"ranked_features": []}, "C001")
+
+
+def test_propose_from_table_emits_distinct_compilable_specs() -> None:
+    payloads, analysis = propose_from_table(_frame(), "churned", "C001", max_specs=4)
+
+    features = [item["parameters"]["target_feature"] for item in payloads]
+    assert len(payloads) >= 2
+    assert "tenure" in features
+    assert "churned" not in features
+    assert len({(item["parameters"]["target_feature"], item["parameters"]["mismatch_fraction"], tuple(sorted(item["parameters"]["segment"].items()))) for item in payloads}) == len(payloads)
+    assert analysis["inspected_columns"] == ["churned", "tenure", "charges", "plan"]
+    assert analysis["hypotheses"]
+    assert all(item["experiment_type"] == "entity_alignment" for item in payloads)
 
 
 def test_feature_invariants_and_score_detect_entity_alignment() -> None:
@@ -100,10 +123,44 @@ def test_feature_invariants_and_score_detect_entity_alignment() -> None:
     shuffled.loc[shuffled.index[0], "tenure"] = 999
     assert not checks(frame, shuffled)["marginal_distribution"]
 
-    score = feature_score(frame, "churned", "tenure")
+    score = frozen_model_score(frame, "churned")
     assert score(frame) > 0.5
     with pytest.raises(ValueError, match="row count"):
         score(frame.iloc[:-1])
+    assert table_invariants(frame, frame.copy())["marginal_distribution"]
+    shuffled = frame.copy()
+    shuffled["tenure"] = shuffled["tenure"].iloc[::-1].to_numpy()
+    assert table_invariants(frame, shuffled)["marginal_distribution"]
+    proxy = feature_score(frame, "churned", "tenure")
+    assert proxy(frame) > 0.5
+    payload = fit_frozen_model(frame, "churned")
+    restored = load_frozen_model(dump_frozen_model(payload))
+    assert restored["feature_columns"] == payload["feature_columns"]
+    with pytest.raises(ValueError, match="no usable model"):
+        infer_feature_columns(pd.DataFrame({"churned": [0, 1]}), "churned")
+    with pytest.raises(ValueError, match="at least 1"):
+        specs_from_profile({"ranked_features": ["tenure"]}, "C001", max_specs=0)
+    assert infer_feature_columns(frame, "churned", allowlist=["tenure"]) == ["tenure"]
+    mismatched = frame.copy()
+    mismatched["extra"] = 1
+    assert table_invariants(frame, mismatched)["schema"] is False
+    import io
+    import joblib
+
+    buffer = io.BytesIO()
+    joblib.dump(["not-a-mapping"], buffer)
+    with pytest.raises(ValueError, match="invalid"):
+        load_frozen_model(buffer.getvalue())
+    single = specs_from_profile(
+        {"ranked_features": ["tenure"], "correlations_with_label": {"tenure": 0.9}},
+        "C001",
+        max_specs=4,
+    )
+    assert len(single) >= 2
+    inverted = pd.DataFrame(
+        {"y": [0, 0, 0, 0, 1, 1, 1, 1], "x": [9, 8, 7, 6, 1, 2, 3, 4]}
+    )
+    assert feature_score(inverted, "y", "x")(inverted) >= 0.5
 
 
 def test_german_credit_table_profiles_without_credit_column_names() -> None:
@@ -114,3 +171,46 @@ def test_german_credit_table_profiles_without_credit_column_names() -> None:
     assert spec["parameters"]["target_feature"] in frame.columns
     assert spec["parameters"]["target_feature"] != "class"
     assert "MonthlyIncome" not in spec["hypothesis"]
+
+
+def test_untrusted_or_unknown_payloads_are_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_specs(*args, **kwargs):
+        del args, kwargs
+        return [
+            {
+                "verification_id": "V001",
+                "claim_id": "C001",
+                "experiment_type": "entity_alignment",
+                "hypothesis": "bad",
+                "parameters": {"transform_code": "print(1)", "target_feature": "tenure"},
+                "expected_invariants": ["schema"],
+                "origin": "sandbox_agent",
+            },
+            {
+                "verification_id": "V002",
+                "claim_id": "C001",
+                "experiment_type": "python_script",
+                "hypothesis": "worse",
+                "parameters": {},
+                "expected_invariants": ["schema"],
+                "origin": "sandbox_agent",
+            },
+        ]
+
+    monkeypatch.setattr("ghostdata.tabular.specs_from_profile", fake_specs)
+    payloads, analysis = propose_from_table(_frame(), "churned", "C001")
+    assert payloads == []
+    assert len(analysis["dropped"]) == 2
+
+
+def test_credit_approval_emits_specs_from_that_table() -> None:
+    path = Path("data/live/credit_approval.csv")
+    frame = load_table(path, "class")
+    payloads, analysis = propose_from_table(frame, "class", "C001")
+
+    features = {item["parameters"]["target_feature"] for item in payloads}
+    assert "class" in analysis["inspected_columns"]
+    assert "MonthlyIncome" not in analysis["inspected_columns"]
+    assert features <= set(frame.columns)
+    assert "class" not in features
+    assert len(payloads) >= 2

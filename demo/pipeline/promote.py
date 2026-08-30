@@ -1,4 +1,4 @@
-"""Generic executor worker: apply a VerificationSpec, run checks, score a frozen model."""
+"""Promote one measured counterexample into exactly four client artifacts."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from ghostdata.bundle import AnalysisBundle
+from ghostdata.demo.artifacts import build_ghost_artifacts
 from ghostdata.execution.local import LocalVerificationRunner, default_compiler
 from ghostdata.tabular import (
     frozen_model_score,
@@ -42,7 +43,8 @@ def main() -> None:
     )
     task = json.loads((WORK_DIR / "task.json").read_text(encoding="utf-8"))
     label_column = str(task["label_column"])
-    reference = pd.read_csv(_dataset_path(task, bundle))
+    reference_path = _dataset_path(task, bundle)
+    reference = pd.read_csv(reference_path)
     runner = LocalVerificationRunner(
         reference,
         default_compiler(),
@@ -51,7 +53,17 @@ def main() -> None:
         metric="roc_auc",
     )
     evidence = runner.run(bundle, spec)
-    (WORK_DIR / "evidence.json").write_text(
+    discovery = json.loads((WORK_DIR / "discovery_report.json").read_text())
+    build_ghost_artifacts(
+        reference_path,
+        label_column,
+        bundle,
+        spec,
+        evidence,
+        discovery,
+        WORK_DIR / "outputs",
+    )
+    (WORK_DIR / "promotion_evidence.json").write_text(
         json.dumps(evidence.to_dict(), indent=2), encoding="utf-8"
     )
 

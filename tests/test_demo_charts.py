@@ -76,7 +76,7 @@ def test_attach_visuals_accepts_an_explicit_table() -> None:
     payload = attach_visuals(run_credit_demo("local"))
 
     assert payload["verdict"] == "not_verified"
-    assert payload["counterexamples"] == 1
+    assert payload["counterexamples"] >= 1
     assert payload["visuals"]["metric"]["candidate"] < payload["visuals"]["metric"]["baseline"]
     assert payload["visuals"]["charts"][0]["id"] == "marginal"
 

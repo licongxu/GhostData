@@ -6,8 +6,7 @@ import pytest
 
 import ghostdata.demo.credit as credit
 import ghostdata.demo.table as table
-from ghostdata.execution.local import LocalVerificationRunner, default_compiler
-from ghostdata.tabular import feature_invariants, feature_score
+from ghostdata.demo.table import build_local_runner
 
 
 def test_prepare_credit_demo_uses_real_dataset_and_measured_baseline() -> None:
@@ -60,27 +59,38 @@ def test_load_credit_data_rejects_missing_columns_and_empty_data(tmp_path: Path)
 
 
 def test_build_daytona_job_contains_dataset_worker_and_package() -> None:
-    prepared = credit.prepare_credit_demo()
+    from ghostdata.execution.daytona import DaytonaSettings
 
-    job = credit.build_daytona_job(
+    prepared = credit.prepare_credit_demo()
+    uploaded = table.build_executor_job(
+        prepared.data_path,
+        credit.TARGET_COLUMN,
+        DaytonaSettings(snapshot="daytona-small", volume_name=None),
+    )
+    baked = credit.build_daytona_job(
         prepared, prepared.bundle, prepared.specs[0]
     )
 
-    assert job.command == "PYTHONPATH=src python worker.py"
-    assert job.role == "executor"
-    assert job.files["dataset.csv"] == prepared.data_path.read_bytes()
-    assert job.files["worker.py"] == credit.WORKER_PATH.read_bytes()
-    assert b"MonthlyIncome" not in job.files["worker.py"]
-    assert "src/ghostdata/bundle/analysis.py" in job.files
-    task = json.loads(job.files["task.json"])
+    assert uploaded.command == "PYTHONPATH=src python worker.py"
+    assert uploaded.files["dataset.csv"] == prepared.data_path.read_bytes()
+    assert "src/ghostdata/bundle/analysis.py" in uploaded.files
+    assert baked.command == "PYTHONPATH=/opt/ghostdata python worker.py"
+    assert baked.code_run
+    assert "dataset.csv" not in baked.files
+    assert baked.volume_files["dataset.csv"] == prepared.data_path.read_bytes()
+    assert baked.role == "executor"
+    assert baked.files["worker.py"] == credit.WORKER_PATH.read_bytes()
+    assert b"MonthlyIncome" not in baked.files["worker.py"]
+    task = json.loads(baked.files["task.json"])
     assert task["label_column"] == credit.TARGET_COLUMN
+    assert task["dataset"] == "/data/dataset.csv"
 
 
 def test_run_credit_demo_local_returns_real_counterexample() -> None:
     report = credit.run_credit_demo("local")
 
     assert report.verdict == "not_verified"
-    assert len(report.ghosts) == 1
+    assert len(report.ghosts) >= 1
     measurements = report.ghosts[0].measurements
     assert measurements["candidate"] < measurements["baseline"]
 
@@ -88,22 +98,15 @@ def test_run_credit_demo_local_returns_real_counterexample() -> None:
 def _stub_daytona(monkeypatch: pytest.MonkeyPatch) -> None:
     prepared = credit.prepare_credit_demo()
     spec = prepared.specs[0]
-    feature = str(spec.parameters["target_feature"])
     analysis = dict(prepared.planner.last_analysis or {})
-    fake_runner = LocalVerificationRunner(
-        prepared.reference,
-        default_compiler(),
-        feature_invariants(feature),
-        feature_score(prepared.reference, credit.TARGET_COLUMN, feature),
-        "roc_auc",
-    )
+    fake_runner = build_local_runner(prepared.reference, credit.TARGET_COLUMN)
 
     class FakeProposal:
         def __init__(self, settings=None, client=None) -> None:
             del settings, client
 
-        def propose(self, bundle, files, label_column, claim_id):
-            del bundle, files, label_column, claim_id
+        def propose(self, bundle, files, label_column, claim_id, volume_files=None):
+            del bundle, files, label_column, claim_id, volume_files
             return [spec], analysis
 
     monkeypatch.setattr(table, "DaytonaProposalRunner", FakeProposal)
@@ -128,22 +131,15 @@ def test_run_credit_demo_lazily_imports_daytona_runner(
 
     prepared = credit.prepare_credit_demo()
     spec = prepared.specs[0]
-    feature = str(spec.parameters["target_feature"])
     analysis = dict(prepared.planner.last_analysis or {})
-    fake_runner = LocalVerificationRunner(
-        prepared.reference,
-        default_compiler(),
-        feature_invariants(feature),
-        feature_score(prepared.reference, credit.TARGET_COLUMN, feature),
-        "roc_auc",
-    )
+    fake_runner = build_local_runner(prepared.reference, credit.TARGET_COLUMN)
 
     class FakeProposal:
         def __init__(self, settings=None, client=None) -> None:
             del settings, client
 
-        def propose(self, bundle, files, label_column, claim_id):
-            del bundle, files, label_column, claim_id
+        def propose(self, bundle, files, label_column, claim_id, volume_files=None):
+            del bundle, files, label_column, claim_id, volume_files
             return [spec], analysis
 
     monkeypatch.setattr(table, "DaytonaProposalRunner", None)

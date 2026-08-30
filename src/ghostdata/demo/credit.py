@@ -6,13 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping
 
-import numpy as np
 import pandas as pd
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import make_pipeline
 
 from ghostdata.bundle import AnalysisBundle
 from ghostdata.demo.table import (
@@ -22,6 +17,7 @@ from ghostdata.demo.table import (
     run_table_demo,
 )
 from ghostdata.planner.agent import StructuredSpecPlanner
+from ghostdata.tabular import frozen_model_score
 from ghostdata.verification import VerificationReport, VerificationSpec
 
 
@@ -29,8 +25,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "build" / "givemesomecredit_debug_3k.csv"
 TARGET_COLUMN = "SeriousDlqin2yrs"
 TARGET_FEATURE = "MonthlyIncome"
-MODEL_RANDOM_STATE = 42
-MODEL_TEST_SIZE = 0.3
 
 
 @dataclass(frozen=True)
@@ -68,36 +62,8 @@ def credit_score(reference: pd.DataFrame):
 
 
 def fitted_credit_model_score(reference: pd.DataFrame):
-    """Fit once on the reference data and score a fixed stratified holdout."""
-    positions = np.arange(len(reference))
-    train_positions, test_positions = train_test_split(
-        positions,
-        test_size=MODEL_TEST_SIZE,
-        random_state=MODEL_RANDOM_STATE,
-        stratify=reference[TARGET_COLUMN],
-    )
-    model = make_pipeline(
-        SimpleImputer(strategy="median"),
-        LogisticRegression(random_state=MODEL_RANDOM_STATE, max_iter=1000),
-    )
-    model.fit(
-        reference.iloc[train_positions][[TARGET_FEATURE]],
-        reference.iloc[train_positions][TARGET_COLUMN],
-    )
-
-    def score(dataframe: pd.DataFrame) -> float:
-        if len(dataframe) != len(reference):
-            raise ValueError("candidate dataset must preserve the reference row count")
-        probabilities = model.predict_proba(
-            dataframe.iloc[test_positions][[TARGET_FEATURE]]
-        )[:, 1]
-        return float(
-            roc_auc_score(
-                dataframe.iloc[test_positions][TARGET_COLUMN], probabilities
-            )
-        )
-
-    return score
+    """Fit once on MonthlyIncome only. Fixture helper, not the general path."""
+    return frozen_model_score(reference, TARGET_COLUMN, (TARGET_FEATURE,))
 
 
 def credit_invariants(

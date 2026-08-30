@@ -3,290 +3,482 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GhostData</title>
+    <title>GhostData — Find the failure your tests already passed</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
       :root {
-        --bg: #101114;
-        --panel: #181a1f;
-        --ink: #f4f1e8;
-        --muted: #aaa69d;
-        --line: #34363b;
-        --accent: #e8ff67;
-        --reference: #7aa2f7;
-        --pass: #9be7a4;
-        --fail: #ff8a7a;
+        --bg: #07080a;
+        --bg-2: #0d0f0c;
+        --panel: #0f1311;
+        --ink: #f3f5ef;
+        --muted: #8d9488;
+        --line: rgba(232, 255, 103, 0.12);
+        --accent: #c8ff3d;
+        --accent-2: #e8ff67;
+        --pass: #5dffb1;
+        --fail: #ff6b5a;
+        --shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
       }
       * { box-sizing: border-box; }
-      body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, sans-serif; }
-      main { max-width: 1120px; margin: 0 auto; padding: 36px 24px 64px; }
-      h1 { font-size: clamp(40px, 7vw, 72px); margin: 0; letter-spacing: -0.06em; }
-      .lede { color: var(--muted); font-size: 20px; max-width: 42rem; }
-      code { color: var(--accent); }
-      button {
-        margin: 8px 12px 0 0; padding: 12px 18px; border: 0; border-radius: 8px;
-        background: var(--accent); color: #111; font-weight: 650; cursor: pointer;
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        color: var(--ink);
+        font: 16px/1.45 "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+        background:
+          radial-gradient(900px 480px at 82% -8%, rgba(200, 255, 61, 0.09), transparent 58%),
+          radial-gradient(700px 420px at 8% 110%, rgba(93, 255, 177, 0.05), transparent 50%),
+          var(--bg);
       }
-      button.secondary { background: #2a2d34; color: var(--ink); }
-      button:disabled { opacity: 0.55; cursor: wait; }
-      article, .panel {
-        margin-top: 20px; padding: 20px; border: 1px solid var(--line);
-        border-radius: 12px; background: var(--panel);
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: radial-gradient(ellipse at 50% 20%, #000 35%, transparent 78%);
+        z-index: 0;
       }
-      #ghost { margin-top: 8px; }
-      #charts { display: grid; gap: 16px; margin-top: 20px; min-height: 280px; }
-      @media (min-width: 860px) {
-        #charts { grid-template-columns: 1fr 1fr; }
-        #charts > article:only-child,
-        #charts > article:nth-child(n + 3) { grid-column: 1 / -1; }
+      .wrap { position: relative; z-index: 1; max-width: 1120px; margin: 0 auto; padding: 22px 24px 80px; }
+      nav {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 0 28px;
       }
-      .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
-      .stat { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-      .stat b { display: block; font-size: 22px; letter-spacing: -0.03em; }
-      .stat span { color: var(--muted); font-size: 13px; }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: 0.04em; }
+      .mark {
+        width: 18px; height: 18px; border: 1.5px solid var(--accent);
+        transform: rotate(45deg);
+        box-shadow: 0 0 18px rgba(200, 255, 61, 0.35);
+      }
+      .eyebrow {
+        color: var(--accent-2);
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .hero { padding: 8vh 0 40px; }
+      h1 {
+        font-size: clamp(56px, 10vw, 108px);
+        line-height: 0.86;
+        letter-spacing: 0.08em;
+        margin: 0 0 18px;
+        font-weight: 650;
+      }
+      .lede {
+        max-width: 34rem;
+        margin: 0 0 32px;
+        font-size: clamp(20px, 2.4vw, 28px);
+        line-height: 1.25;
+        color: var(--muted);
+        letter-spacing: -0.03em;
+      }
+      .cta {
+        appearance: none; border: 0; cursor: pointer;
+        background: var(--accent); color: #08110a;
+        font: 650 16px/1 "Instrument Sans", sans-serif;
+        padding: 14px 22px; border-radius: 999px;
+        letter-spacing: -0.02em;
+        box-shadow: 0 0 0 1px rgba(200, 255, 61, 0.2), 0 10px 40px rgba(200, 255, 61, 0.18);
+      }
+      .cta:hover { filter: brightness(1.05); }
+      .cta:disabled { opacity: 0.55; cursor: wait; }
+      .ghost-btn {
+        background: transparent; color: var(--ink);
+        border: 1px solid var(--line); box-shadow: none;
+      }
+      .kicker {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+        color: var(--muted); margin: 0 0 16px;
+      }
+      .examples { display: grid; gap: 12px; grid-template-columns: 1fr; }
+      @media (min-width: 520px) { .examples { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      .card {
+        text-align: left; width: 100%;
+        background: linear-gradient(180deg, rgba(200, 255, 61, 0.04), transparent 42%), var(--panel);
+        border: 1px solid var(--line); border-radius: 18px; padding: 18px 16px 16px;
+        color: inherit; cursor: pointer;
+        min-height: 176px;
+        display: flex; flex-direction: column; gap: 8px;
+        transition: transform 120ms ease, border-color 120ms ease;
+      }
+      .card:hover { transform: translateY(-2px); border-color: rgba(200, 255, 61, 0.35); }
+      .card b { font-size: 20px; letter-spacing: -0.04em; }
+      .card p { margin: 0; color: var(--muted); font-size: 14px; }
+      .meta {
+        margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap;
+        font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--accent-2);
+      }
+      .chip {
+        border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px;
+      }
+      .workspace { display: none; margin-top: 56px; }
+      .workspace.open { display: block; }
+      .terminal {
+        background: #070b09; border: 1px solid var(--line); border-radius: 16px;
+        padding: 18px 18px 16px; min-height: 168px;
+        font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px;
+        white-space: pre-wrap; color: #d5dbc8; overflow: auto;
+        box-shadow: var(--shadow);
+      }
+      .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+      .stat {
+        border: 1px solid var(--line); border-radius: 16px; padding: 16px;
+        background: var(--panel);
+      }
+      .stat span { display: block; color: var(--muted); font-size: 12px; }
+      .stat b { display: block; margin-top: 6px; font-size: 22px; letter-spacing: -0.04em; }
       .pass { color: var(--pass); }
       .fail { color: var(--fail); }
-      h3 { margin: 0; font-size: 16px; }
-      .muted { color: var(--muted); font-size: 14px; }
-      figure { margin: 0; }
-      svg { width: 100%; height: 280px; display: block; }
-      .legend { display: flex; gap: 16px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
-      .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
-      details { margin-top: 24px; color: var(--muted); }
-      pre { margin-top: 12px; padding: 18px; overflow: auto; background: #12141a; border-radius: 10px; color: #d7d3c8; }
-      .headline { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.05em; margin: 28px 0 0; }
-      #result { min-height: 1.5em; }
+      .headline { font-size: clamp(28px, 4vw, 44px); letter-spacing: -0.06em; margin: 22px 0 0; }
+      .story { color: var(--muted); max-width: 46rem; }
+      .charts { display: grid; gap: 12px; margin-top: 16px; }
+      @media (min-width: 720px) { .charts { grid-template-columns: 1fr 1fr; } }
+      .chart {
+        border: 1px solid var(--line); border-radius: 16px; padding: 16px; background: var(--panel);
+      }
+      .chart h3 { margin: 0 0 4px; font-size: 15px; letter-spacing: -0.03em; }
+      .chart p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+      .bars { display: flex; align-items: flex-end; gap: 6px; height: 92px; }
+      .col { flex: 1; display: flex; gap: 2px; align-items: flex-end; height: 100%; }
+      .bar { flex: 1; border-radius: 2px 2px 0 0; min-height: 2px; }
+      .bar.ref { background: rgba(243, 245, 239, 0.28); }
+      .bar.ghost { background: var(--accent); }
+      .legend { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+      .swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+      .swatch.ref { background: rgba(243, 245, 239, 0.45); }
+      .swatch.ghost { background: var(--accent); }
+      .downloads a { color: var(--accent-2); margin-right: 14px; }
+      .overlay {
+        display: none; position: fixed; inset: 0; z-index: 20;
+        background: rgba(4, 6, 5, 0.72); backdrop-filter: blur(10px);
+        align-items: center; justify-content: center; padding: 24px;
+      }
+      .overlay.open { display: flex; }
+      .sheet {
+        width: min(560px, 100%);
+        background: #0c100e; border: 1px solid var(--line); border-radius: 22px;
+        padding: 22px; box-shadow: var(--shadow);
+      }
+      .sheet h2 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.05em; }
+      .sheet .hint { color: var(--muted); margin: 0 0 18px; }
+      label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 12px; letter-spacing: 0.04em; }
+      textarea, select {
+        width: 100%; padding: 12px 12px; border-radius: 12px;
+        border: 1px solid var(--line); background: #080b09; color: var(--ink); font: inherit;
+      }
+      textarea { min-height: 96px; resize: vertical; }
+      .drop {
+        border: 1px dashed rgba(200, 255, 61, 0.28); border-radius: 14px;
+        padding: 22px; text-align: center; color: var(--muted); cursor: pointer;
+      }
+      .drop.hot, .drop:hover { border-color: var(--accent); color: var(--ink); }
+      .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+      #upload { position: absolute; opacity: 0; width: 0; height: 0; }
+      .raw { margin-top: 18px; color: var(--muted); }
+      pre { margin: 10px 0 0; padding: 14px; overflow: auto; background: #070b09; border-radius: 12px; color: #d5dbc8; }
+      @media (max-width: 720px) {
+        .stats { grid-template-columns: 1fr; }
+        .hero { padding-top: 4vh; }
+      }
     </style>
   </head>
   <body>
-    <main>
-      <h1>GhostData</h1>
-      <p class="lede">Independent, execution-based verification for AI data-analysis agents. Existing checks can pass while the model’s relationships break.</p>
-      <section id="verifications">Planning counterexample experiments…</section>
-      <p>
-        <button data-backend="local">Run on local backend</button>
-        <button class="secondary" data-backend="daytona">Run in Daytona</button>
-      </p>
-      <p id="result">Loading the measured counterexample…</p>
+    <div class="wrap">
+      <nav>
+        <div class="brand"><span class="mark"></span> GhostData</div>
+        <p class="eyebrow">AI proposes. Daytona proves.</p>
+      </nav>
 
-      <section id="ghost">
-        <p class="headline" id="headline">Same values. Different relationships.</p>
-        <div class="stats">
-          <div class="stat"><span>Existing checks</span><b id="check-stat"></b></div>
-          <div class="stat"><span>Model quality</span><b id="metric-stat"></b></div>
-          <div class="stat"><span>Rows shuffled</span><b id="affected-stat"></b></div>
-        </div>
-        <div id="charts"></div>
+      <section class="hero">
+        <h1>GhostData</h1>
+        <p class="lede">Find the failure your tests already passed.</p>
+        <button class="cta" id="try">Try it</button>
       </section>
 
-      <details id="raw">
-        <summary>Raw verification report</summary>
-        <pre id="raw-json"></pre>
-      </details>
-    </main>
+      <p class="kicker">Example runs</p>
+      <div class="examples" id="examples"></div>
+
+      <section class="workspace" id="workspace">
+        <p class="kicker" id="run-kicker">Live run</p>
+        <pre class="terminal" id="progress">Waiting for a dataset and a task…</pre>
+        <p class="headline" id="headline"></p>
+        <div class="stats">
+          <div class="stat"><span>Existing checks</span><b id="check-stat">—</b></div>
+          <div class="stat"><span>Model quality</span><b id="metric-stat">—</b></div>
+          <div class="stat"><span>Worlds</span><b id="world-stat">—</b></div>
+        </div>
+        <p class="story" id="what"></p>
+        <div class="charts" id="charts"></div>
+        <p class="downloads" id="downloads"></p>
+        <details class="raw">
+          <summary>Raw run payload</summary>
+          <pre id="raw-json"></pre>
+        </details>
+      </section>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <form class="sheet" id="try-form">
+        <h2>Try it</h2>
+        <p class="hint">Upload a labeled CSV. GhostData will propose failures, run each one in an isolated Daytona sandbox, and keep only measured ghosts.</p>
+        <label>CSV upload
+          <div class="drop" id="drop">Drop a CSV here, or click to choose</div>
+          <input id="upload" type="file" accept=".csv,text/csv" />
+        </label>
+        <label>Or start from an example
+          <select id="dataset">
+            <option value="credit">Give Me Some Credit</option>
+            <option value="approval">Credit Approval</option>
+            <option value="german">German Credit</option>
+          </select>
+        </label>
+        <label>What is this data for?
+          <textarea id="prompt">Predict default. SeriousDlqin2yrs is the target. Find plausible preprocessing or pipeline failures that schema, missingness and marginal checks could miss.</textarea>
+        </label>
+        <div class="actions">
+          <button class="cta" id="run" type="submit">Run on Daytona</button>
+          <button class="cta ghost-btn" id="close-try" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+
     <script>
-      const REF = "#7aa2f7";
-      const GHOST = "#e8ff67";
+      const prompts = {
+        credit: "Predict default. SeriousDlqin2yrs is the target. Find plausible preprocessing or pipeline failures that schema, missingness and marginal checks could miss.",
+        approval: "Predict credit approval. class is the target (+/-). Find pipeline failures that ordinary data-quality checks could miss.",
+        german: "Predict credit risk. class is the target. Find pipeline failures that schema and marginal checks could miss.",
+      };
+      const examples = [
+        {
+          id: "credit",
+          title: "Give Me Some Credit",
+          blurb: "A default model whose existing checks still pass after values move to the wrong rows.",
+          chips: ["3,000 rows", "SeriousDlqin2yrs", "Daytona-ready"],
+        },
+        {
+          id: "approval",
+          title: "Credit Approval",
+          blurb: "Approve or deny. Ordinary quality checks miss the broken relationship.",
+          chips: ["690 rows", "class +/−", "UCI"],
+        },
+        {
+          id: "german",
+          title: "German Credit",
+          blurb: "Classic risk table. Same numbers. Different entities.",
+          chips: ["1,000 rows", "class", "UCI"],
+        },
+      ];
 
-      fetch("/api/verifications").then((response) => response.json()).then((verifications) => {
-        const copy = {
-          entity_alignment:
-            "Valid values get attached to the wrong rows. Checks that only look at the value distribution still pass.",
-        };
-        document.querySelector("#verifications").innerHTML = verifications.map((spec) => `
-          <article><code>${spec.verification_id} · ${String(spec.experiment_type).replaceAll("_", " ")}</code><p>${copy[spec.experiment_type] || spec.hypothesis}</p></article>
+      const $ = (id) => document.querySelector(id);
+
+      function fmt(value) {
+        return Number(value).toFixed(3);
+      }
+
+      function openTry() {
+        $("#overlay").classList.add("open");
+        $("#prompt").focus();
+      }
+      function closeTry() {
+        $("#overlay").classList.remove("open");
+      }
+
+      function renderExamples() {
+        $("#examples").innerHTML = examples.map((item) => `
+          <button class="card" type="button" data-example="${item.id}">
+            <b>${item.title}</b>
+            <p>${item.blurb}</p>
+            <div class="meta">${item.chips.map((chip) => `<span class="chip">${chip}</span>`).join("")}</div>
+          </button>
         `).join("");
-      });
-
-      function clear(svg) {
-        while (svg.firstChild) svg.removeChild(svg.firstChild);
       }
 
-      function node(name, attrs) {
-        const el = document.createElementNS("http://www.w3.org/2000/svg", name);
-        Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
-        return el;
+      function renderProgress(events) {
+        const lines = ["GHOSTDATA", "━━━━━━━━━━━━━━━━━━━━━━━━", ""];
+        (events || []).forEach((event) => lines.push(event.text || JSON.stringify(event)));
+        $("#progress").textContent = lines.join("\n");
       }
 
-      function niceMax(value) {
-        if (value <= 0) return 1;
-        const pow = Math.pow(10, Math.floor(Math.log10(value)));
-        return Math.ceil(value / pow) * pow;
-      }
-
-      function compact(value) {
-        const abs = Math.abs(value);
-        if (abs >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
-        if (abs >= 1000) return `${(value / 1000).toFixed(1)}k`;
-        if (abs > 0 && abs < 1) return value.toFixed(2);
-        return String(Math.round(value * 100) / 100);
-      }
-
-      function pct(value) {
-        return `${(100 * value).toFixed(1)}%`;
-      }
-
-      function fmt(value, digits) {
-        return Number(value).toFixed(digits);
-      }
-
-      function drawAxes(svg, width, height, pad, yMax, yFormat) {
-        svg.appendChild(node("line", {
-          x1: pad.left, y1: pad.top, x2: pad.left, y2: height - pad.bottom,
-          stroke: "#34363b",
-        }));
-        svg.appendChild(node("line", {
-          x1: pad.left, y1: height - pad.bottom, x2: width - pad.right, y2: height - pad.bottom,
-          stroke: "#34363b",
-        }));
-        for (let i = 0; i <= 4; i += 1) {
-          const y = pad.top + ((height - pad.top - pad.bottom) * i) / 4;
-          const value = yMax * (1 - i / 4);
-          svg.appendChild(node("text", {
-            x: pad.left - 8, y: y + 4, fill: "#aaa69d", "font-size": "11", "text-anchor": "end",
-          })).textContent = yFormat(value);
+      function barChart(chart) {
+        const ref = chart.reference || [];
+        const ghost = chart.ghost || [];
+        const n = Math.max(ref.length, ghost.length);
+        const step = n > 12 ? Math.ceil(n / 12) : 1;
+        const max = Math.max(1, ...ref.map(Number), ...ghost.map(Number));
+        const cols = [];
+        for (let i = 0; i < n; i += step) {
+          const a = Math.max(0, Number(ref[i] || 0));
+          const b = Math.max(0, Number(ghost[i] || 0));
+          cols.push(`<div class="col"><span class="bar ref" style="height:${(a / max) * 100}%"></span><span class="bar ghost" style="height:${(b / max) * 100}%"></span></div>`);
         }
+        return `<article class="chart"><h3>${chart.title || chart.id}</h3><p>${chart.caption || ""}</p><div class="bars">${cols.join("")}</div><p class="legend"><span class="swatch ref"></span> before <span class="swatch ghost"></span> ghost</p></article>`;
       }
 
-      function overlayBars(svg, midpoints, reference, ghost) {
-        clear(svg);
-        const width = 640, height = 280;
-        const pad = { top: 16, right: 16, bottom: 36, left: 48 };
-        const innerW = width - pad.left - pad.right;
-        const innerH = height - pad.top - pad.bottom;
-        const yMax = niceMax(Math.max(...reference, ...ghost, 1));
-        const n = midpoints.length;
-        const gap = 2;
-        const barW = Math.max(4, innerW / n - gap);
-        drawAxes(svg, width, height, pad, yMax, (v) => Math.round(v));
-        midpoints.forEach((mid, i) => {
-          const x = pad.left + (i + 0.5) * (innerW / n) - barW / 2;
-          const hRef = (reference[i] / yMax) * innerH;
-          const hGhost = (ghost[i] / yMax) * innerH;
-          svg.appendChild(node("rect", {
-            x, y: height - pad.bottom - hGhost, width: barW, height: hGhost,
-            fill: GHOST, opacity: "0.85",
-          }));
-          svg.appendChild(node("rect", {
-            x, y: height - pad.bottom - hRef, width: barW, height: hRef,
-            fill: "none", stroke: REF, "stroke-width": "1.6",
-          }));
-          if (i % 4 === 0) {
-            svg.appendChild(node("text", {
-              x: x + barW / 2, y: height - 12, fill: "#aaa69d", "font-size": "11", "text-anchor": "middle",
-            })).textContent = compact(mid);
-          }
-        });
+      function renderVisuals(visuals) {
+        const charts = (visuals && visuals.charts) || [];
+        $("#charts").innerHTML = charts.slice(0, 2).map(barChart).join("");
       }
 
-      function groupedBars(svg, labels, reference, ghost, yFormat) {
-        clear(svg);
-        const width = 640, height = 280;
-        const pad = { top: 16, right: 16, bottom: 48, left: 52 };
-        const innerW = width - pad.left - pad.right;
-        const innerH = height - pad.top - pad.bottom;
-        const numeric = [...reference, ...ghost].map((v) => Number(v) || 0);
-        const yMax = niceMax(Math.max(...numeric, 0.01));
-        const n = Math.max(labels.length, 1);
-        const groupW = innerW / n;
-        const barW = Math.max(10, groupW * 0.32);
-        drawAxes(svg, width, height, pad, yMax, yFormat);
-        labels.forEach((label, i) => {
-          const center = pad.left + (i + 0.5) * groupW;
-          const hRef = ((Number(reference[i]) || 0) / yMax) * innerH;
-          const hGhost = ((Number(ghost[i]) || 0) / yMax) * innerH;
-          svg.appendChild(node("rect", {
-            x: center - barW - 2, y: height - pad.bottom - hRef, width: barW, height: hRef, fill: REF,
-          }));
-          svg.appendChild(node("rect", {
-            x: center + 2, y: height - pad.bottom - hGhost, width: barW, height: hGhost, fill: GHOST,
-          }));
-          svg.appendChild(node("text", {
-            x: center, y: height - 14, fill: "#aaa69d", "font-size": "11", "text-anchor": "middle",
-          })).textContent = label;
-        });
+      function showWorkspace() {
+        $("#workspace").classList.add("open");
+        $("#workspace").scrollIntoView({ block: "start", behavior: "smooth" });
       }
 
-      function yFormatter(chart) {
-        if (chart.y_format === "percent") return pct;
-        return compact;
-      }
-
-      function renderChart(chart) {
-        const article = document.createElement("article");
-        const heading = document.createElement("h3");
-        heading.textContent = chart.title;
-        const caption = document.createElement("p");
-        caption.className = "muted";
-        caption.textContent = chart.caption;
-        const figure = document.createElement("figure");
-        const svg = node("svg", { viewBox: "0 0 640 280", role: "img" });
-        svg.setAttribute("aria-label", chart.title);
-        const legend = document.createElement("div");
-        legend.className = "legend";
-        legend.innerHTML = '<span><i class="swatch" style="background:#7aa2f7"></i>Reference</span><span><i class="swatch" style="background:#e8ff67"></i>Ghost</span>';
-        figure.append(svg, legend);
-        article.append(heading, caption, figure);
-        if (chart.kind === "overlay_histogram") {
-          overlayBars(svg, chart.bin_midpoints, chart.reference, chart.ghost);
+      function renderResult(source) {
+        const report = source.report || source;
+        const winner = report.winner;
+        const visuals = report.visuals || source.visuals;
+        const proposal = report.proposal || source.proposal || {};
+        const found = (report.ghosts && (Array.isArray(report.ghosts) ? report.ghosts.length : report.ghosts) > 0)
+          || report.verdict === "not_verified"
+          || (report.counterexamples || 0) > 0;
+        $("#headline").textContent = found ? "GHOST FOUND" : "NO GHOST";
+        $("#headline").className = "headline " + (found ? "fail" : "pass");
+        const invariants = (winner && winner.invariants) || (visuals && visuals.invariants) || {};
+        const passed = Object.values(invariants).filter(Boolean).length;
+        const total = Object.keys(invariants).length;
+        $("#check-stat").className = passed === total && total ? "pass" : "fail";
+        $("#check-stat").textContent = total ? `${passed} / ${total} PASS` : "—";
+        const baseline = winner && winner.baseline != null ? winner.baseline : visuals && visuals.metric && visuals.metric.baseline;
+        const candidate = winner && winner.candidate != null ? winner.candidate : visuals && visuals.metric && visuals.metric.candidate;
+        if (baseline != null && candidate != null) {
+          $("#metric-stat").className = "fail";
+          $("#metric-stat").textContent = `${fmt(baseline)} → ${fmt(candidate)}`;
         } else {
-          groupedBars(svg, chart.labels, chart.reference, chart.ghost, yFormatter(chart));
+          $("#metric-stat").textContent = "—";
         }
-        return article;
+        const worlds = (report.worlds && report.worlds.length)
+          || proposal.executed_spec_count
+          || (report.claims && report.claims[0] && report.claims[0].experiments && report.claims[0].experiments.length)
+          || "—";
+        $("#world-stat").textContent = String(worlds);
+        $("#what").textContent = (winner && winner.hypothesis)
+          || proposal.hypothesis
+          || "No invariant-passing world produced a measured metric drop.";
+        const artifacts = report.artifacts || {};
+        $("#downloads").innerHTML = Object.entries(artifacts).map(([role, href]) => `<a href="${href}">${role}</a>`).join("");
+        renderVisuals(visuals);
+        $("#raw-json").textContent = JSON.stringify(source, null, 2);
+        showWorkspace();
       }
 
-      function renderVisuals(payload) {
-        const visuals = payload.visuals;
-        const ghost = document.querySelector("#ghost");
-        const mount = document.querySelector("#charts");
-        mount.replaceChildren();
-        if (!visuals) {
-          return;
-        }
-        document.querySelector("#headline").textContent = visuals.headline;
-        const passed = Object.values(visuals.invariants).filter(Boolean).length;
-        const total = Object.keys(visuals.invariants).length;
-        document.querySelector("#check-stat").className = passed === total ? "pass" : "fail";
-        document.querySelector("#check-stat").textContent = `${passed} / ${total} PASS`;
-        const metric = visuals.metric;
-        document.querySelector("#metric-stat").className = "fail";
-        document.querySelector("#metric-stat").textContent =
-          metric.baseline == null ? "—" : `${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`;
-        document.querySelector("#affected-stat").textContent = pct(metric.affected_fraction);
-        (visuals.charts || []).forEach((chart) => mount.append(renderChart(chart)));
-        document.querySelector("#raw-json").textContent = JSON.stringify(payload, null, 2);
-        ghost.scrollIntoView({ block: "start", behavior: "smooth" });
-      }
-
-      async function runBackend(backend) {
-        const result = document.querySelector("#result");
-        const buttons = document.querySelectorAll("button[data-backend]");
-        buttons.forEach((item) => { item.disabled = true; });
-        result.textContent = `Running in ${backend}…`;
-        try {
-          const response = await fetch(`/api/demo/run?backend=${backend}`, { method: "POST" });
+      async function poll(runId) {
+        while (true) {
+          const response = await fetch(`/api/runs/${runId}`);
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.detail || response.statusText);
-          const verdict = payload.verdict === "not_verified" ? "GHOST FOUND" : payload.verdict;
-          const metric = payload.visuals && payload.visuals.metric;
-          const metricText = metric && metric.baseline != null
-            ? `model quality ${fmt(metric.baseline, 3)} → ${fmt(metric.candidate, 3)}`
-            : "model quality dropped";
-          const proposed = payload.proposal && payload.proposal.origin === "sandbox_agent"
-            ? " Agent proposed entity alignment after inspecting the table."
-            : "";
-          result.innerHTML = `<strong class="fail">${verdict}</strong> · checks still pass, ${metricText}.${proposed}`;
-          renderVisuals(payload);
-        } catch (error) {
-          result.textContent = `Run failed: ${error.message}`;
-        } finally {
-          buttons.forEach((item) => { item.disabled = false; });
+          renderProgress(payload.events);
+          if (payload.status === "completed") {
+            renderResult(payload);
+            return;
+          }
+          if (payload.status === "failed") {
+            $("#progress").textContent += `\n\nFAILED: ${payload.error || "run failed"}`;
+            throw new Error(payload.error || "run failed");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1200));
         }
       }
 
-      document.querySelectorAll("button[data-backend]").forEach((button) => {
-        button.addEventListener("click", () => runBackend(button.dataset.backend));
+      async function startRun(event) {
+        event.preventDefault();
+        const button = $("#run");
+        button.disabled = true;
+        closeTry();
+        $("#run-kicker").textContent = "Live Daytona run";
+        $("#progress").textContent = "Creating Daytona analyst sandbox…";
+        $("#headline").textContent = "";
+        $("#charts").innerHTML = "";
+        $("#downloads").innerHTML = "";
+        showWorkspace();
+        try {
+          const prompt = $("#prompt").value.trim();
+          if (!prompt) throw new Error("tell GhostData what this data is for");
+          const body = new FormData();
+          body.append("prompt", prompt);
+          const upload = $("#upload").files[0];
+          if (upload) body.append("file", upload);
+          body.append("dataset", $("#dataset").value);
+          const response = await fetch("/api/runs", { method: "POST", body });
+          const created = await response.json();
+          if (!response.ok) throw new Error(created.detail || response.statusText);
+          await poll(created.run_id);
+        } catch (error) {
+          $("#progress").textContent += `\n\nRun failed: ${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      async function runExample(dataset) {
+        $("#run-kicker").textContent = `Example · ${dataset}`;
+        $("#progress").textContent = "Replaying a measured example on this table…";
+        $("#headline").textContent = "";
+        $("#charts").innerHTML = "";
+        $("#downloads").innerHTML = "";
+        showWorkspace();
+        try {
+          const response = await fetch(`/api/demo/run?backend=local&dataset=${dataset}`, { method: "POST" });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || response.statusText);
+          const worlds = payload.proposal && payload.proposal.executed_spec_count;
+          renderProgress([
+            { text: `✓ Table inspected (${(payload.proposal && payload.proposal.inspected_columns || []).length} columns)` },
+            { text: `✓ ${worlds || "?"} failure worlds measured` },
+            { text: payload.verdict === "not_verified" ? "GHOST FOUND" : "no Ghost" },
+          ]);
+          renderResult(payload);
+        } catch (error) {
+          $("#progress").textContent += `\n\nExample failed: ${error.message}`;
+        }
+      }
+
+      renderExamples();
+      $("#try").addEventListener("click", openTry);
+      $("#close-try").addEventListener("click", closeTry);
+      $("#overlay").addEventListener("click", (event) => {
+        if (event.target === $("#overlay")) closeTry();
       });
-      runBackend("local");
+      $("#dataset").addEventListener("change", (event) => {
+        $("#prompt").value = prompts[event.target.value] || prompts.credit;
+      });
+      $("#try-form").addEventListener("submit", startRun);
+      $("#drop").addEventListener("click", () => $("#upload").click());
+      $("#upload").addEventListener("change", () => {
+        const file = $("#upload").files[0];
+        $("#drop").textContent = file ? file.name : "Drop a CSV here, or click to choose";
+      });
+      ["dragenter", "dragover"].forEach((name) => {
+        $("#drop").addEventListener(name, (event) => {
+          event.preventDefault();
+          $("#drop").classList.add("hot");
+        });
+      });
+      ["dragleave", "drop"].forEach((name) => {
+        $("#drop").addEventListener(name, (event) => {
+          event.preventDefault();
+          $("#drop").classList.remove("hot");
+        });
+      });
+      $("#drop").addEventListener("drop", (event) => {
+        const file = event.dataTransfer.files[0];
+        if (file) {
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          $("#upload").files = transfer.files;
+          $("#drop").textContent = file.name;
+        }
+      });
+      $("#examples").addEventListener("click", (event) => {
+        const card = event.target.closest("[data-example]");
+        if (card) runExample(card.dataset.example);
+      });
     </script>
   </body>
 </html>

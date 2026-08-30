@@ -74,7 +74,7 @@ These prove the sentence judges need to hear:
 > Each candidate is an executable production-failure hypothesis running with the real checks and frozen model in an isolated Daytona sandbox.
 
 1. **`CreateSandboxFromSnapshotParams`**
-   - `snapshot="daytona-small"` at first, then `ghostdata-runner` once built
+   - `snapshot="ghostdata-runner"` (declarative Image builder; fallback upload path uses `daytona-small`)
    - `language="python"`
    - `ephemeral=True` (delete on stop)
    - `labels={"project":"ghostdata","world_id":"W023","failure_class":"entity_alignment"}`

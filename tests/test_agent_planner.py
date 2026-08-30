@@ -27,13 +27,15 @@ def test_structured_spec_planner_emits_sandbox_agent_origin() -> None:
 
     specs = planner.propose(analysis, analysis.claims)
 
-    assert len(specs) == 1
+    assert len(specs) >= 2
     spec = specs[0]
     assert spec.origin == "sandbox_agent"
     assert spec.experiment_type == "entity_alignment"
     assert spec.parameters["target_feature"] == "signal"
+    assert {item.parameters["target_feature"] for item in specs} <= {"signal", "noise"}
     assert planner.last_analysis is not None
     assert planner.last_analysis["ranked_features"][0] == "signal"
+    assert "signal" in planner.last_analysis["inspected_columns"]
 
 
 def test_structured_spec_planner_skips_other_evaluators_and_rejects_foreign_claims() -> None:

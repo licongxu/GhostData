@@ -179,8 +179,33 @@ def _infer_paired(
     return best_column
 
 
+def _winning_experiment(report: VerificationReport):
+    if not report.ghosts:
+        return None
+
+    def damage(item: object) -> float:
+        value = getattr(item, "measurements", {}).get("degradation")
+        if isinstance(value, (int, float)) and isfinite(value):
+            return float(value)
+        return float("-inf")
+
+    return max(report.ghosts, key=damage)
+
+
+def _evidence_for_visuals(report: VerificationReport):
+    winner = _winning_experiment(report)
+    if winner is not None:
+        for item in report.evidence:
+            if item.verification_id == winner.verification_id:
+                return item
+    if report.evidence:
+        return report.evidence[0]
+    return None
+
+
 def _metric_block(report: VerificationReport) -> dict[str, Any]:
-    observations = report.evidence[0].observations if report.evidence else {}
+    evidence = _evidence_for_visuals(report)
+    observations = evidence.observations if evidence is not None else {}
     metric = observations.get("model_metric", {})
     if not isinstance(metric, Mapping):
         metric = {}
@@ -189,8 +214,9 @@ def _metric_block(report: VerificationReport) -> dict[str, Any]:
     degradation = None
     if baseline is not None and candidate is not None:
         degradation = baseline - candidate
-    if report.ghosts:
-        measured = report.ghosts[0].measurements
+    winner = _winning_experiment(report)
+    if winner is not None:
+        measured = winner.measurements
         measured_baseline = _finite_float(measured.get("baseline"))
         measured_candidate = _finite_float(measured.get("candidate"))
         measured_drop = _finite_float(measured.get("degradation"))
@@ -283,7 +309,8 @@ def build_visuals(
     spec: VerificationSpec | None = None,
 ) -> dict[str, Any]:
     feature = _perturbed_feature(reference, ghost, spec)
-    observations = report.evidence[0].observations if report.evidence else {}
+    evidence = _evidence_for_visuals(report)
+    observations = evidence.observations if evidence is not None else {}
     invariants = observations.get("invariants", {})
     if not isinstance(invariants, Mapping):
         invariants = {}

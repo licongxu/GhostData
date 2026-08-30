@@ -12,13 +12,13 @@ from ghostdata.demo.artifacts import (
     build_credit_artifacts,
     validate_credit_artifacts,
 )
-from ghostdata.demo.credit import DEFAULT_DATA_PATH, credit_invariants, fitted_credit_model_score
-from ghostdata.execution.local import LocalVerificationRunner, default_compiler
+from ghostdata.demo.credit import DEFAULT_DATA_PATH
 from ghostdata.verification import (
     ClaimVerdict,
     ExecutionEvidence,
     ExperimentVerdict,
     VerificationReport,
+    VerificationSpec,
 )
 
 
@@ -40,17 +40,14 @@ def test_local_discovery_ranks_measured_damage_and_publishes_four_artifacts(
     root, run_dir, report = published_run
 
     assert report["status"] == "completed"
-    assert report["selected_agent"] == "relationship_hunter"
+    assert report["label_column"] == "SeriousDlqin2yrs"
+    assert report["winning_spec"]["origin"] == "sandbox_agent"
+    assert report["winning_spec"]["parameters"]["target_feature"] != "SeriousDlqin2yrs"
     assert report["model"]["type"] == "sklearn.linear_model.LogisticRegression"
-    assert report["baseline_auc"] == pytest.approx(0.5423511904761905)
-    assert report["candidate_auc"] == pytest.approx(0.4689285714285714)
-    assert report["auc_drop"] == pytest.approx(0.0734226190476191)
-    assert [agent["outcome"] for agent in report["agents"]] == [
-        "passed",
-        "counterexample",
-        "counterexample",
-        "counterexample",
-    ]
+    assert len(report["model"]["features"]) > 1
+    assert report["candidate_auc"] < report["baseline_auc"]
+    assert len(report["agents"]) >= 2
+    assert report["proposal"]["inspected_columns"]
     assert {path.name for path in run_dir.iterdir()} == set(ARTIFACT_NAMES.values())
     assert discovery.load_discovery_run("local-test", root) == report
     assert discovery.list_discovery_runs(root) == [report]
@@ -75,6 +72,13 @@ def test_discovery_validation_and_empty_catalog(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unsafe"):
         discovery.prepare_credit_discovery(
             DEFAULT_DATA_PATH, discovery.DEFAULT_AGENT_PROFILES, "../bad", "local"
+        )
+    with pytest.raises(ValueError, match="unsafe"):
+        discovery.run_table_discovery(
+            DEFAULT_DATA_PATH,
+            "SeriousDlqin2yrs",
+            output_root=tmp_path,
+            discovery_id="../bad",
         )
     with pytest.raises(ValueError, match="unsupported"):
         discovery.run_credit_discovery(
@@ -107,13 +111,36 @@ def test_planner_ignores_unsupported_claim_and_rejects_external_claim() -> None:
 
 
 def test_discovery_without_counterexample_is_not_promoted(tmp_path: Path) -> None:
+    from ghostdata.demo.table import FrozenSpecsPlanner
+    from ghostdata.verification import VerificationSpec
+
+    planner = FrozenSpecsPlanner(
+        (
+            VerificationSpec(
+                "V001",
+                "C001",
+                "entity_alignment",
+                "no damage",
+                {
+                    "target_feature": "MonthlyIncome",
+                    "segment": {},
+                    "mismatch_fraction": 0.0,
+                    "seed": 7,
+                    "agent_id": "noop",
+                },
+                ("schema", "marginal_distribution", "missing_rate"),
+                "sandbox_agent",
+            ),
+        )
+    )
     with pytest.raises(RuntimeError, match="without a promotable Ghost"):
-        discovery.run_credit_discovery(
+        discovery.run_table_discovery(
+            DEFAULT_DATA_PATH,
+            "SeriousDlqin2yrs",
             backend="local",
-            data_path=DEFAULT_DATA_PATH,
             output_root=tmp_path,
-            profiles=(discovery.AgentProfile("improves_auc", 0.10),),
             discovery_id="no-ghost",
+            planner=planner,
         )
     assert not (tmp_path / "no-ghost").exists()
 
@@ -161,6 +188,22 @@ def test_daytona_discovery_and_promotion_use_separate_sandboxes(
 ) -> None:
     calls: list[tuple[str, bool]] = []
 
+    class FakeProposal:
+        def __init__(self, settings=None, client=None) -> None:
+            del settings, client
+
+        def propose(self, bundle, files, label_column, claim_id, volume_files=None):
+            del files, claim_id, volume_files
+            from ghostdata.planner.agent import StructuredSpecPlanner
+            from ghostdata.tabular import load_table
+
+            planner = StructuredSpecPlanner(
+                load_table(DEFAULT_DATA_PATH, label_column),
+                label_column,
+                max_specs=2,
+            )
+            return planner.propose(bundle, bundle.claims), dict(planner.last_analysis or {})
+
     class FakeDaytonaRunner:
         def __init__(
             self,
@@ -173,28 +216,34 @@ def test_daytona_discovery_and_promotion_use_separate_sandboxes(
             self.artifact_sink = artifact_sink
 
         def run(self, bundle, spec):
+            from ghostdata.demo.table import build_local_runner
+            from ghostdata.tabular import load_table
+
             job = self.job_factory(bundle, spec)
             calls.append((spec.verification_id, bool(job.download_paths)))
-            reference = pd.read_csv(
-                __import__("io").BytesIO(job.files["dataset.csv"])
-            )
-            runner = LocalVerificationRunner(
-                reference,
-                default_compiler(),
-                credit_invariants,
-                fitted_credit_model_score(reference),
-                "roc_auc",
-            )
+            if "dataset.csv" in job.files:
+                reference = pd.read_csv(__import__("io").BytesIO(job.files["dataset.csv"]))
+                reference_path = DEFAULT_DATA_PATH
+            else:
+                reference = load_table(DEFAULT_DATA_PATH, "SeriousDlqin2yrs")
+                reference_path = DEFAULT_DATA_PATH
+            runner = build_local_runner(reference, "SeriousDlqin2yrs")
             evidence = runner.run(bundle, spec)
             if job.download_paths:
                 workspace = tmp_path / "fake-sandbox"
                 workspace.mkdir()
-                reference_path = workspace / "dataset.csv"
-                reference.to_csv(reference_path, index=False)
                 output = workspace / "outputs"
                 payload = json.loads(job.files["discovery_report.json"])
-                build_credit_artifacts(
-                    reference_path, bundle, spec, evidence, payload, output
+                from ghostdata.demo.artifacts import build_ghost_artifacts
+
+                build_ghost_artifacts(
+                    reference_path,
+                    "SeriousDlqin2yrs",
+                    bundle,
+                    spec,
+                    evidence,
+                    payload,
+                    output,
                 )
                 paths = self.artifact_sink(
                     bundle,
@@ -207,23 +256,24 @@ def test_daytona_discovery_and_promotion_use_separate_sandboxes(
                 evidence = replace(evidence, artifact_paths=paths)
             return evidence
 
+    monkeypatch.setattr(discovery, "DaytonaProposalRunner", FakeProposal)
     monkeypatch.setattr(discovery, "DaytonaVerificationRunner", FakeDaytonaRunner)
-    profiles = (
-        discovery.AgentProfile("pass_agent", 0.10),
-        discovery.AgentProfile("ghost_agent", 0.75),
-    )
+    settings = discovery.DaytonaSettings(snapshot="daytona-small", volume_name=None)
 
-    report = discovery.run_credit_discovery(
-        "daytona",
+    report = discovery.run_table_discovery(
         DEFAULT_DATA_PATH,
+        "SeriousDlqin2yrs",
+        "daytona",
         tmp_path,
-        profiles,
-        "daytona-test",
+        discovery_id="daytona-test",
+        max_specs=2,
+        daytona_settings=settings,
     )
 
-    assert report["selected_agent"] == "ghost_agent"
-    assert sorted(calls[:2]) == [("V001", False), ("V002", False)]
-    assert calls[-1] == ("V002", True)
+    assert report["status"] == "completed"
+    assert report["winning_spec"]["origin"] == "sandbox_agent"
+    assert any(not download for _, download in calls)
+    assert calls[-1][1] is True
 
 
 def test_promotion_rejects_incomplete_artifact_set(
@@ -246,7 +296,9 @@ def test_promotion_rejects_incomplete_artifact_set(
     monkeypatch.setattr(discovery, "DaytonaVerificationRunner", BadPromotionRunner)
     with pytest.raises(ValueError, match="invalid artifact set"):
         discovery._promote_daytona(
-            prepared,
+            prepared.data_path,
+            "SeriousDlqin2yrs",
+            prepared.bundle,
             prepared.specs[0],
             {"agents": [], "verification_report": {}},
             tmp_path,
@@ -298,7 +350,7 @@ def test_artifact_builder_rejects_nonempty_destination_and_bad_evidence(
         "local-test",
         "local",
     )
-    spec = prepared.specs[-1]
+    spec = VerificationSpec.from_dict(report["winning_spec"])
     evidence = ExecutionEvidence.from_dict(report["winning_evidence"])
     bad_observations = dict(evidence.observations)
     bad_observations["model_metric"] = {
@@ -410,7 +462,7 @@ def test_discovery_does_not_overwrite_and_cleans_failed_publication(
     def fail_build(*args, **kwargs):
         raise OSError("publication failed")
 
-    monkeypatch.setattr(discovery, "build_credit_artifacts", fail_build)
+    monkeypatch.setattr(discovery, "_promote_local", fail_build)
     with pytest.raises(OSError, match="publication failed"):
         discovery.run_credit_discovery(
             "local",
