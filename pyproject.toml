@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ghostdata"
 version = "0.1.0"
-description = "Find the data-pipeline failure your tests already passed"
+description = "Verification layer for data-analysis agents. They propose; Daytona measures."
 requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]

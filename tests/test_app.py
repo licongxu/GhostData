@@ -67,17 +67,20 @@ def test_frontend_route_serves_demo_shell() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "<h1>GhostData</h1>" in response.text
-    assert "Find the failure your tests already passed." in response.text
+    assert "Verify data-analysis agents." in response.text
     assert "Try it" in response.text
-    assert "Example runs" in response.text
-    assert "AI proposes. Daytona proves." in response.text
+    assert "Example tables" in response.text
+    assert 'href="#about"' in response.text
+    assert "Architecture" in response.text
+    assert "Analysis agent" in response.text
+    assert "The agent proposes. Daytona verifies." in response.text
     assert "Run on Daytona" in response.text
     assert 'id="upload"' in response.text
     assert 'id="prompt"' in response.text
     assert 'id="progress"' in response.text
     assert 'fetch("/api/runs"' in response.text
     assert "GHOST FOUND" in response.text
-    assert "Model quality" in response.text
+    assert "Frozen model" in response.text
     assert "Give Me Some Credit" in response.text
     assert "Credit Approval" in response.text
     assert "German Credit" in response.text

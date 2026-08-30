@@ -1,37 +1,44 @@
 # GhostData
 
-**Find the data-pipeline failure your tests already passed.**
+**GhostData verifies data-analysis agents.** They propose. Daytona measures. We keep only falsified counterexamples.
 
-GhostData does not attack the model with noise. It **simulates a failed data world** — for example valid feature values attached to the wrong rows — then asks whether that world would still look fine to your existing checks while the frozen model quietly degrades. If yes, that simulated dataset is a **Ghost**.
+Data agents inspect tables and claim the data is fine. We do not trust that. GhostData is the **verification layer**: the agent may analyze and write transforms; **truth is measured in isolated Daytona sandboxes**. Credit / entity misalignment / AUC is the first fixture that proves the loop, not the product.
 
-Not a drift dashboard. Not Great Expectations. Not an LLM inventing scary stories.
+A **Ghost** is a measured counterexample: existing checks still pass, the frozen model drops. The agent is not allowed to declare one.
 
 ## Architecture
 
-The analyst only hypothesizes the failure. **Daytona simulates the world**: it applies the transform to your real table, materializes the simulated dataset, runs the checks you already trust, and scores the frozen model. Then the sandbox is deleted. The host never invents an AUC.
-
-```mermaid
-flowchart TB
-  R["Your labeled CSV + prompt"] --> A["Analyst hypothesizes a silent failure<br/>Codex, or pandas if no login"]
-
-  A --> D["Daytona simulates that world<br/>one ephemeral sandbox per hypothesis"]
-  D --> S["Simulated dataset<br/>same schema, same values, wrong relationships"]
-
-  S --> C{"Existing checks<br/>schema · marginals · missingness"}
-  C -->|fail| X["Reject<br/>your tests already catch it"]
-  C -->|pass| M{"Frozen model"}
-
-  M -->|quality holds| H["Harmless simulation"]
-  M -->|quality drops| G["Ghost<br/>simulated data that looks valid<br/>and still breaks the model"]
-
-  G --> Pack["Ghost pack<br/>transform.py · ghost_dataset.csv<br/>model_report.json · regression_contract.py"]
+```text
+CSV + prompt  (what was the agent predicting?)
+    → Analysis agent  (×1, isolated): inspect + propose hypotheses only
+    → Verifiers       (Daytona ×N):   transform → checks → frozen model
+    → Host evaluator: rank measured evidence → Ghost pack, or nothing
 ```
 
-A Ghost is measured, not narrated: the simulated world must pass the checks **and** drop the frozen-model metric. Several hypotheses can run in parallel; leftover sandboxes should be `0`.
+```mermaid
+flowchart LR
+  subgraph you [1 · You]
+    A["Labeled CSV<br/>what the agent was predicting"]
+  end
+  subgraph agent [2 · Analysis agent]
+    B["Proposes hypotheses<br/>cannot declare a Ghost"]
+  end
+  subgraph daytona [3 · Daytona ×N]
+    C["Each world measured<br/>transform · checks · frozen model"]
+  end
+  subgraph host [4 · GhostData]
+    D["Rank evidence<br/>keep the Ghost"]
+  end
+  A --> B --> C --> D
+```
+
+Analysts propose. Verifier sandboxes measure. The host evaluator ranks. Codex (or a pandas fallback) is the proposer; it must not claim AUC dropped. Each hypothesis gets its own ephemeral Daytona verifier. Leftover sandboxes should be `0`.
+
+Ghost pack: `transform.py` · `ghost_dataset.csv` · `model_report.json` · `regression_contract.py`
 
 ## Quick start
 
-Python 3.11+. Daytona key from [app.daytona.io](https://app.daytona.io) (this demo uses Daytona sandboxes). Codex login is optional.
+Python 3.11+. Daytona key from [app.daytona.io](https://app.daytona.io). Codex login is optional.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -41,9 +48,9 @@ python scripts/ensure_snapshot.py
 PYTHONPATH=src uvicorn app.backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Upload a labeled CSV (or pick a fixture) and a one-line task, e.g. `Predict credit default; SeriousDlqin2yrs is the label.` Wait for a Ghost, then download the four artifacts.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Upload a labeled CSV (or pick a fixture). Say what the agent was predicting, e.g. `Predict credit default; SeriousDlqin2yrs is the label.` If a Ghost is measured, download the four artifacts.
 
-Without Codex: `GHOSTDATA_ANALYST=deterministic` in `.env` uses the pandas proposer. With Codex: `codex login` (ChatGPT), then leave `GHOSTDATA_ANALYST=auto`.
+Without Codex: `GHOSTDATA_ANALYST=deterministic` in `.env`. With Codex: `codex login` (ChatGPT), then `GHOSTDATA_ANALYST=auto`.
 
 ## Other commands
 

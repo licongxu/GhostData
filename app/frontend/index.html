@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GhostData — Find the failure your tests already passed</title>
+    <title>GhostData — Agents propose. Daytona verifies.</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -44,11 +44,21 @@
         z-index: 0;
       }
       .wrap { position: relative; z-index: 1; max-width: 1120px; margin: 0 auto; padding: 22px 24px 80px; }
+      html { scroll-behavior: smooth; }
       nav {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 8px 0 28px;
+        display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        padding: 8px 0 28px; flex-wrap: wrap;
       }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: 0.04em; }
+      .nav-links {
+        display: flex; align-items: center; gap: 18px;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+      }
+      .nav-links a {
+        color: var(--muted); text-decoration: none;
+      }
+      .nav-links a:hover { color: var(--accent-2); }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -0.02em; }
       .mark {
         width: 18px; height: 18px; border: 1.5px solid var(--accent);
         transform: rotate(45deg);
@@ -64,18 +74,103 @@
       .hero { padding: 8vh 0 40px; }
       h1 {
         font-size: clamp(56px, 10vw, 108px);
-        line-height: 0.86;
-        letter-spacing: 0.08em;
+        line-height: 0.92;
+        letter-spacing: -0.045em;
         margin: 0 0 18px;
         font-weight: 650;
       }
       .lede {
-        max-width: 34rem;
-        margin: 0 0 32px;
-        font-size: clamp(20px, 2.4vw, 28px);
-        line-height: 1.25;
+        max-width: 38rem;
+        margin: 0 0 12px;
+        font-size: clamp(22px, 3vw, 34px);
+        line-height: 1.2;
+        color: var(--ink);
+        letter-spacing: -0.035em;
+      }
+      .hook {
+        max-width: 36rem;
+        margin: 0 0 28px;
         color: var(--muted);
+        font-size: 17px;
+        line-height: 1.45;
+      }
+      .about {
+        margin: 0 0 48px;
+        padding: 28px 0 0;
+        border-top: 1px solid var(--line);
+      }
+      .about h2 {
+        margin: 0 0 14px;
+        font-size: clamp(22px, 3vw, 30px);
+        letter-spacing: -0.04em;
+      }
+      .arch {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 20px 18px 18px;
+        background: #080b09;
+      }
+      .arch-title {
+        margin: 0 0 16px;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent-2);
+      }
+      .arch-rail {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+      }
+      .arch-node {
+        flex: 1 1 0;
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 14px 12px;
+        background: var(--panel);
+      }
+      .arch-node.daytona {
+        border-color: rgba(200, 255, 61, 0.32);
+        background: linear-gradient(180deg, rgba(200, 255, 61, 0.07), transparent 70%), var(--panel);
+      }
+      .arch-node.out {
+        border-color: rgba(255, 107, 90, 0.35);
+      }
+      .arch-tag {
+        display: block;
+        margin-bottom: 8px;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent-2);
+      }
+      .arch-node.out .arch-tag { color: var(--fail); }
+      .arch-node b {
+        display: block;
+        font-size: 16px;
         letter-spacing: -0.03em;
+        margin-bottom: 6px;
+      }
+      .arch-node p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .arch-join {
+        flex: 0 0 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(232, 255, 103, 0.45);
+        font-size: 18px;
+      }
+      @media (max-width: 820px) {
+        .arch-rail { flex-direction: column; }
+        .arch-join { flex: 0 0 18px; transform: rotate(90deg); }
       }
       .cta {
         appearance: none; border: 0; cursor: pointer;
@@ -192,16 +287,54 @@
     <div class="wrap">
       <nav>
         <div class="brand"><span class="mark"></span> GhostData</div>
-        <p class="eyebrow">AI proposes. Daytona proves.</p>
+        <div class="nav-links">
+          <a href="#about">About</a>
+          <a href="#examples-heading">Examples</a>
+          <a href="#try" id="try-nav">Try it</a>
+        </div>
       </nav>
 
       <section class="hero">
         <h1>GhostData</h1>
-        <p class="lede">Find the failure your tests already passed.</p>
+        <p class="lede">Verify data-analysis agents.</p>
+        <p class="hook">They propose hypotheses. Daytona measures each one in isolation. We keep only a Ghost — a measured counterexample. The agent cannot declare victory.</p>
         <button class="cta" id="try">Try it</button>
       </section>
 
-      <p class="kicker">Example runs</p>
+      <section class="about" id="about">
+        <p class="kicker">How it works</p>
+        <h2>The agent proposes. Daytona verifies.</h2>
+        <div class="arch">
+          <p class="arch-title">Architecture</p>
+          <div class="arch-rail">
+            <div class="arch-node">
+              <span class="arch-tag">1 · You</span>
+              <b>CSV + task</b>
+              <p>Upload a labeled table. Say what the agent was predicting.</p>
+            </div>
+            <div class="arch-join" aria-hidden="true">→</div>
+            <div class="arch-node daytona">
+              <span class="arch-tag">2 · Daytona ×1</span>
+              <b>Analysis agent</b>
+              <p>Inspects the table and writes hypotheses. It cannot declare a Ghost.</p>
+            </div>
+            <div class="arch-join" aria-hidden="true">→</div>
+            <div class="arch-node daytona">
+              <span class="arch-tag">3 · Daytona ×N</span>
+              <b>Verifiers</b>
+              <p>Each hypothesis: transform, your checks, frozen-model score.</p>
+            </div>
+            <div class="arch-join" aria-hidden="true">→</div>
+            <div class="arch-node out">
+              <span class="arch-tag">4 · Ghost</span>
+              <b>Keep the failure</b>
+              <p>Checks still pass. Model metric drops. Artifacts download.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <p class="kicker" id="examples-heading">Example tables</p>
       <div class="examples" id="examples"></div>
 
       <section class="workspace" id="workspace">
@@ -209,9 +342,9 @@
         <pre class="terminal" id="progress">Waiting for a dataset and a task…</pre>
         <p class="headline" id="headline"></p>
         <div class="stats">
-          <div class="stat"><span>Existing checks</span><b id="check-stat">—</b></div>
-          <div class="stat"><span>Model quality</span><b id="metric-stat">—</b></div>
-          <div class="stat"><span>Worlds</span><b id="world-stat">—</b></div>
+          <div class="stat"><span>Your checks on the Ghost</span><b id="check-stat">—</b></div>
+          <div class="stat"><span>Frozen model (baseline → Ghost)</span><b id="metric-stat">—</b></div>
+          <div class="stat"><span>Hypotheses tested</span><b id="world-stat">—</b></div>
         </div>
         <p class="story" id="what"></p>
         <div class="charts" id="charts"></div>
@@ -226,7 +359,7 @@
     <div class="overlay" id="overlay">
       <form class="sheet" id="try-form">
         <h2>Try it</h2>
-        <p class="hint">Upload a labeled CSV. GhostData will propose failures, run each one in an isolated Daytona sandbox, and keep only measured ghosts.</p>
+        <p class="hint">Labeled CSV + what the agent was predicting. GhostData verifies in Daytona. A Ghost is returned only if checks pass and the model metric drops.</p>
         <label>CSV upload
           <div class="drop" id="drop">Drop a CSV here, or click to choose</div>
           <input id="upload" type="file" accept=".csv,text/csv" />
@@ -258,19 +391,19 @@
         {
           id: "credit",
           title: "Give Me Some Credit",
-          blurb: "A default model whose existing checks still pass after values move to the wrong rows.",
+          blurb: "Checks still pass after income values attach to the wrong people. The model breaks anyway.",
           chips: ["3,000 rows", "SeriousDlqin2yrs", "Daytona-ready"],
         },
         {
           id: "approval",
           title: "Credit Approval",
-          blurb: "Approve or deny. Ordinary quality checks miss the broken relationship.",
+          blurb: "Schema and marginals look fine. Entity misalignment still fools the frozen model.",
           chips: ["690 rows", "class +/−", "UCI"],
         },
         {
           id: "german",
           title: "German Credit",
-          blurb: "Classic risk table. Same numbers. Different entities.",
+          blurb: "Same feature values, wrong rows. Your checks pass; AUC drops.",
           chips: ["1,000 rows", "class", "UCI"],
         },
       ];
@@ -441,6 +574,10 @@
 
       renderExamples();
       $("#try").addEventListener("click", openTry);
+      $("#try-nav").addEventListener("click", (event) => {
+        event.preventDefault();
+        openTry();
+      });
       $("#close-try").addEventListener("click", closeTry);
       $("#overlay").addEventListener("click", (event) => {
         if (event.target === $("#overlay")) closeTry();
