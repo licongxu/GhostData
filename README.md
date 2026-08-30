@@ -1,20 +1,22 @@
 # GhostData
 
-**Adversarial CI for ML data pipelines.**
+**Find the data-pipeline failure your tests already passed.**
 
-Your tests only catch failures you encoded. GhostData searches for the next one: a plausible pipeline failure that **passes existing checks** and still **breaks the frozen model**. That counterexample is a **Ghost**.
+GhostData searches for a plausible preprocessing failure that **passes existing checks** and still **breaks the frozen model**. That measured counterexample is a **Ghost**.
 
 Not a drift dashboard. Not Great Expectations. Not an LLM inventing scary stories.
 
-```text
-CSV + prompt
-  → Codex proposes failure worlds   (pandas fallback if Codex is not logged in)
-  → Daytona sandboxes measure them  (real checks + frozen model, then delete)
-  → host ranks evidence
-  → Ghost pack: transform.py · ghost_dataset.csv · model_report.json · regression_contract.py
+```mermaid
+flowchart LR
+  A["CSV + prompt"] --> B["Analyst<br/>proposes worlds"]
+  B --> C["Daytona sandboxes<br/>checks + frozen model"]
+  C --> D["Host ranks<br/>measured evidence"]
+  D --> E["Ghost pack"]
 ```
 
-Codex proposes. Daytona proves. The host never invents an AUC.
+A world becomes a Ghost only if checks stay green **and** the frozen-model metric drops. Codex proposes (pandas fallback if not logged in). Daytona proves. The host never invents an AUC.
+
+Ghost pack: `transform.py` · `ghost_dataset.csv` · `model_report.json` · `regression_contract.py`
 
 ## Judge demo
 
