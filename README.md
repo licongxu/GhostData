@@ -2,9 +2,9 @@
 
 **GhostData verifies data-analysis agents.** They propose. Daytona measures. We keep only falsified counterexamples.
 
-Data agents inspect tables and claim the data is fine. We do not trust that. GhostData is the **verification layer**: the agent may analyze and write transforms; **truth is measured in isolated Daytona sandboxes**. Credit / entity misalignment / AUC is the first fixture that proves the loop, not the product.
+Data agents inspect tables and return claims. GhostData is the **verification layer**: the agent analyzes and writes transforms; **isolated Daytona sandboxes measure those claims**. Credit / entity misalignment / AUC is the first fixture that proves the loop.
 
-A **Ghost** is a measured counterexample: existing checks still pass, the frozen model drops. The agent is not allowed to declare one.
+A **Ghost** is a measured counterexample: existing checks still pass and the frozen model drops. Only the host evaluator declares one.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ flowchart LR
     A["Labeled CSV<br/>what the agent was predicting"]
   end
   subgraph agent [2 · Analysis agent]
-    B["Proposes hypotheses<br/>cannot declare a Ghost"]
+    B["Proposes hypotheses<br/>inspect + write transforms"]
   end
   subgraph daytona [3 · Daytona ×N]
     C["Each world measured<br/>transform · checks · frozen model"]
@@ -32,7 +32,7 @@ flowchart LR
   A --> B --> C --> D
 ```
 
-Analysts propose. Verifier sandboxes measure. The host evaluator ranks. Codex (or a pandas fallback) is the proposer; it must not claim AUC dropped. Each hypothesis gets its own ephemeral Daytona verifier. Leftover sandboxes should be `0`.
+Analysts propose. Verifier sandboxes measure. The host evaluator ranks. Codex (or a pandas fallback) writes hypotheses; Daytona scores them. Each hypothesis gets its own ephemeral verifier. Leftover sandboxes should be `0`.
 
 Ghost pack: `transform.py` · `ghost_dataset.csv` · `model_report.json` · `regression_contract.py`
 
